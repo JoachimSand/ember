@@ -5,7 +5,21 @@ use std::str::Chars;
 #[derive(Debug, PartialEq, Eq)]
 enum Token {
     Identifier(String),
+    
+    // Expressions
+    Equals,
     Plus,
+    Minus,
+    Mult,
+    Increment,
+    Decrement,
+    PlusAssign,
+    MinusAssign,
+    MultAssign,    
+
+    PtrOperand,
+    
+
     End,
     Unknown,
 }
@@ -40,7 +54,7 @@ fn lex_token(chars : &mut Peekable<Chars<'_>>) -> Token {
                 // Only consume iterator if next char can be added to current token
                 match chars.peek() {
                     Some(c) => {
-                        if c.is_ascii_alphanumeric() {
+                        if c.is_ascii_alphanumeric() || *c == '_' {
                             token_string.push(*c);
                             chars.next();
                         } else {
@@ -53,9 +67,71 @@ fn lex_token(chars : &mut Peekable<Chars<'_>>) -> Token {
         }
 
         '+' => {
-            return Token::Plus;
+            match chars.peek() {
+                Some(c) => {
+                    match *c {
+                        '+' => {
+                            chars.next();
+                            return Token::Increment;
+                        }
+                        '=' => {
+                            chars.next();
+                            return Token::PlusAssign;
+                        }
+                        _ => {
+                            return Token::Plus;
+                        }
+                    }
+                },
+                None => return Token::Plus,
+            }
         }
 
+        '-' => {
+            match chars.peek() {
+                Some(c) => {
+                    match *c {
+                        '-' => {
+                            chars.next();
+                            return Token::Decrement;
+                        }
+                        '=' => {
+                            chars.next();
+                            return Token::MinusAssign;
+                        }
+                        '>' => {
+                            chars.next();
+                            return Token::PtrOperand;
+                        }
+                        _ => {
+                            return Token::Minus;
+                        }
+                    }
+                },
+                None => return Token::Minus,
+            }
+        }
+
+        '*' => {
+            match chars.peek() {
+                Some(c) => {
+                    match *c {
+                        '=' => {
+                            chars.next();
+                            return Token::MultAssign;
+                        }
+                        _ => {
+                            return Token::Mult;
+                        }
+                    }
+                },
+                None => return Token::Mult,
+            }
+            
+        }
+
+
+        
         _ => {
             return Token::Unknown;
         }
