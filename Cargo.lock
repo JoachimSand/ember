@@ -3,5 +3,5 @@
 version = 3
 
 [[package]]
-name = "CParser"
+name = "Ember"
 version = "0.1.0"
