@@ -97,7 +97,7 @@ enum Token {
 #[macro_export]
 macro_rules! lex_operand {
     (
-        chars = $c:ident,
+        chars = $c:expr,
         fallback = $f:expr,
         $(
             $s:pat => $t:expr  
@@ -109,17 +109,211 @@ macro_rules! lex_operand {
                     $(
                         $s => {
                             $c.next();
-                            return $t;
+                            return Some($t);
                         }    
                     )*
                     _ => {
-                        return $f;
+                        return Some($f);
                     }
                 }
             },
-            None => return $f,
+            None => return Some($f),
         }
     }};
+}
+
+pub struct Lexer<'input> {
+    char_stream : Peekable<Chars<'input>>,
+}
+
+impl <'input> Iterator for Lexer <'input> { 
+   
+
+    type Item = Token;
+    fn next(&mut self) -> Option<Token> {
+   
+    
+    let token_string = &mut String::new();
+
+    let first_char : char;
+    
+    loop {
+        match self.char_stream.peek() {
+            Some(c) => {
+                if c.is_whitespace() == false {
+                    first_char = *c;
+                    self.char_stream.next();
+                    break;
+                } else {
+                    self.char_stream.next();
+                }
+            },
+            None => return Some(Token::End),
+        }
+    }
+
+    match first_char {
+        'a'..='z' | 'A'..='Z' | '_' => {
+            // Attempt to parse identifier
+            token_string.push(first_char);
+
+            loop {
+                // Only consume iterator if next char can be added to current token
+                match self.char_stream.peek() {
+                    Some(c) => {
+                        if c.is_ascii_alphanumeric() || *c == '_' {
+                            token_string.push(*c);
+                            self.char_stream.next();
+                        } else {
+                            break;
+                            //return Token::Identifier(token_string.to_string());
+                        }
+                    },
+                    None => break, 
+                    //return Token::Identifier(token_string.to_string()),
+                }
+            }
+            
+            if token_string.chars().count() >= 10 {
+                // No keyword is 10 characters or longer
+                return Some(Token::Identifier(token_string.to_string()));
+            }
+
+            match token_string.as_str() {
+                "auto" => return Some(Token::Auto),
+                "break" => return Some(Token::Break),
+                "case" => return Some(Token::Case),
+                "char" => return Some(Token::Char),
+                "const" => return Some(Token::Const),
+                "continue" => return Some(Token::Continue),
+                "default" => return Some(Token::Default),
+                "do" => return Some(Token::Do),
+                "double" => return Some(Token::Double),
+                "else" => return Some(Token::Else),
+                "enum" => return Some(Token::Enum),
+                "extern" => return Some(Token::Extern),
+                "float" => return Some(Token::Float),
+                "for" => return Some(Token::For),
+                "goto" => return Some(Token::Goto),
+                "if" => return Some(Token::If),
+                "int" => return Some(Token::Int),
+                "long" => return Some(Token::Long),
+                "register" => return Some(Token::Register),
+                "return" => return Some(Token::Return),
+                "short" => return Some(Token::Short),
+                "signed" => return Some(Token::Signed),
+                "sizeof" => return Some(Token::Sizeof),
+                "static" => return Some(Token::Static),
+                "struct" => return Some(Token::Struct),
+                "switch" => return Some(Token::Switch),
+                "typedef" => return Some(Token::Typedef),
+                "union" => return Some(Token::Union),
+                "unsigned" => return Some(Token::Unsigned),
+                "void" => return Some(Token::Void),
+                "volatile" => return Some(Token::Volatile),
+                "while" => return Some(Token::While),
+
+                _ => return Some(Token::Identifier(token_string.to_string())),
+            }
+
+        }
+
+        '+' => {
+            lex_operand!(chars = self.char_stream, fallback = Token::Plus, 
+                '+' => Token::Increment, 
+                '=' => Token::PlusAssign
+            );
+        }
+
+        '-' => {
+            lex_operand!(chars = self.char_stream, fallback = Token::Minus,
+                '-' => Token::Decrement,
+                '=' => Token::MinusAssign,
+                '>' => Token::PtrOperand
+            );
+        }
+
+        '*' => {
+            lex_operand!(chars = self.char_stream, chars, fallback = Token::Mult,
+                '=' => Token::MultAssign
+            );
+        }
+
+        '/' => {
+            lex_operand!(chars = self.char_stream, fallback = Token::Div,
+                '=' => Token::DivAssign
+            );
+        }
+
+        '%' => {
+            lex_operand!(chars = self.char_stream, fallback = Token::Mod,
+                '=' => Token::ModAssign
+            )
+        }
+
+        '&' => {
+            lex_operand!(chars = self.char_stream, fallback = Token::AND,
+                '&' => Token::ANDLogical,
+                '=' => Token::ANDAssign
+            );
+        }
+
+        '|' => {
+            lex_operand!(chars = self.char_stream, fallback = Token::OR,
+                '|' => Token::ORLogical,
+                '=' => Token::ORAssign
+            );
+        }
+
+        '^' => {
+            lex_operand!(chars = self.char_stream, fallback = Token::XOR,
+                '=' => Token::XORAssign
+            );
+        }
+
+        '<' => {
+            lex_operand!(chars = self.char_stream, fallback = Token::LessThan,
+                '<' => Token::LeftShift,
+                '=' => Token::LessThanOrEq
+            );
+        }
+
+        '>' => {
+            lex_operand!(chars = self.char_stream, fallback = Token::GreaterThan,
+                '>' => Token::RightShift,
+                '=' => Token::GreaterThanOrEq
+            );
+        } 
+
+        '!' => {
+            lex_operand!(chars = self.char_stream, fallback = Token::Negation,
+                '=' => Token::NegationAssign
+            );
+        }
+
+        '=' => {
+            lex_operand!(chars = self.char_stream, fallback = Token::Assign,
+                '=' => Token::Equals
+            );
+        }
+        '?' => return Some(Token::Ternary),
+        '.' => return Some(Token::Dot,
+        ';' => return Some(Token::Semicolon,
+        ':' => return Some(Token::Colon,
+        '(' => return Some(Token::LParen,
+        ')' => return Some(Token::RParen,
+        '{' => return Some(Token::LCurlyBracket,
+        '}' => return Some(Token::RCurlyBracket,
+        '[' => return Some(Token::LBracket,
+        ']' => return Some(Token::RBracket,
+
+        _ => {
+            return Token::Unknown;
+        }
+    }
+        
+        return Some(Token::Unknown);
+    }
 }
 
 fn lex_token(chars : &mut Peekable<Chars<'_>>) -> Token {
@@ -307,18 +501,20 @@ fn lex_token(chars : &mut Peekable<Chars<'_>>) -> Token {
 fn main() {
     let stdin = io::stdin();
     let input = &mut String::new();
+
+    let lexer : Lexer;
     loop {
         input.clear();
         match stdin.read_line(input) {
             Ok(n) => {
                 println!("Recieved {n} bytes: {input}");
                 //let mut tokens : Vec<Token> = Vec::new();  
-                let mut chars : Peekable<Chars<'_>>= input.chars().peekable();
+                lexer.CharStream = input.chars().peekable();
                 
-                let mut cur_token : Token = lex_token(&mut chars);
+                let mut cur_token : Token = lex_token(&mut char_stream);
                 while cur_token != Token::End && cur_token != Token::Unknown {
                     println!("Token: {:?}", cur_token);
-                    cur_token = lex_token(&mut chars);
+                    cur_token = lex_token(&mut char_stream);
                 }
             },
             Err(error) => println!("Error: {error}"),
