@@ -2,10 +2,12 @@ use std::io;
 use std::iter::Peekable;
 use std::str::Chars;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Token {
     Identifier(String),
-    
+    DoubleLiteral(f64),
+    IntegerLiteral(i64),
+
     // Arithmetic Operators
     Plus,
     Minus,
@@ -133,7 +135,6 @@ impl <'input> Iterator for Lexer <'input> {
     
 
     fn next(&mut self) -> Option<Token> {    
-        let token_string = &mut String::new();
 
         let mut first_char : char;
         
@@ -147,32 +148,36 @@ impl <'input> Iterator for Lexer <'input> {
 
         match first_char {
             'a'..='z' | 'A'..='Z' | '_' => {
+                
+                let identifier_string = &mut String::new();
+
                 // Attempt to parse identifier
-                token_string.push(first_char);
+                identifier_string.push(first_char);
 
                 loop {
+
                     // Only consume iterator if next char can be added to current token
                     match self.char_stream.peek() {
                         Some(c) => {
                             if c.is_ascii_alphanumeric() || *c == '_' {
-                                token_string.push(*c);
+                                identifier_string.push(*c);
                                 self.char_stream.next();
                             } else {
                                 break;
-                                //return Token::Identifier(token_string.to_string());
+                                //return Token::Identifier(identifier_string.to_string());
                             }
                         },
                         None => break, 
-                        //return Token::Identifier(token_string.to_string()),
+                        //return Token::Identifier(identifier_string.to_string()),
                     }
                 }
                 
-                if token_string.chars().count() >= 10 {
+                if identifier_string.chars().count() >= 10 {
                     // No keyword is 10 characters or longer
-                    return Some(Token::Identifier(token_string.to_string()));
+                    return Some(Token::Identifier(identifier_string.to_string()));
                 }
 
-                match token_string.as_str() {
+                match identifier_string.as_str() {
                     "auto" => return Some(Token::Auto),
                     "break" => return Some(Token::Break),
                     "case" => return Some(Token::Case),
@@ -206,9 +211,42 @@ impl <'input> Iterator for Lexer <'input> {
                     "volatile" => return Some(Token::Volatile),
                     "while" => return Some(Token::While),
 
-                    _ => return Some(Token::Identifier(token_string.to_string())),
+                    _ => return Some(Token::Identifier(identifier_string.to_string())),
                 }
 
+            }
+
+            '0'..='9' => { 
+                let num_literal_str = &mut String::new();
+                num_literal_str.push(first_char);
+
+                let mut is_int : bool = true;
+                loop {
+                    match self.char_stream.peek() {
+                        Some(c) => {
+                            if c.is_ascii_digit() || matches!(c, '.') {
+                                
+                                if *c == '.' {
+                                    is_int = false;
+                                }
+
+                                num_literal_str.push(*c); 
+                                self.char_stream.next();
+
+                            } else {
+                                break;
+                            }
+                        }
+
+                        None => break,
+                    }    
+                }
+
+                if is_int {
+                    return Some(Token::IntegerLiteral(num_literal_str.parse().ok()?));
+                } else {
+                    return Some(Token::DoubleLiteral(num_literal_str.parse().ok()?));
+                }
             }
 
             '+' => {
