@@ -1,6 +1,7 @@
 use std::iter::Peekable;
 use crate::lexer::*;
 
+#[derive(Clone)]
 pub enum BinaryOperator { 
     // Arithmetic Operators
     Plus,
@@ -38,11 +39,13 @@ pub enum BinaryOperator {
     NegationAssign,
 }
 
+#[derive(Clone)]
 pub enum UnaryOperator {
     PrefixIncrement,
     Decrement,
 }
 
+#[derive(Clone)]
 pub enum TerminalType {
     Identifier(String),
     IntegerLiteral(i64),
@@ -51,6 +54,7 @@ pub enum TerminalType {
 
 type NodePtr = Box<Node>;
 
+#[derive(Clone)]
 pub enum Node { 
     BinaryNode { operator : BinaryOperator, left : NodePtr, right : NodePtr},
     UnaryNode { operator : UnaryOperator, operand : NodePtr},
@@ -96,18 +100,25 @@ fn parse_atom<'a>(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
 }
 
 
-fn parse_expression(lexer : &mut Peekable<Lexer>, left : NodePtr, min_precedence : u8) -> Result<NodePtr, ParserError>{
+fn parse_expression(lexer : &mut Peekable<Lexer>, min_precedence : u8) -> Result<NodePtr, ParserError>{
     // Find next atom
     let mut result : NodePtr = parse_atom(lexer)?;
+    
 
-    let mut op_token : &Token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
-    let mut op_info = operator_lookup(op_token)?;
 
-    while op_info.precedence >= min_precedence{
-        // If the current operator has a higher precedence than the callee (min) precedence
-        // then consume the operator and parse its right hand operand.
-        let op_token = &lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
+    // Stages:
+    //
+
+    loop {
+        let mut peek_token : &Token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
+        let op_info = operator_lookup(peek_token)?;
         
+        if(op_info.precedence < min_precedence){
+            return Ok(result);
+        }
+
+        let cur_token = &lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
+
         let rhs : NodePtr;
         if op_info.left_associative {
             rhs = parse_expression(lexer, result, min_precedence + 1)?;
@@ -115,18 +126,13 @@ fn parse_expression(lexer : &mut Peekable<Lexer>, left : NodePtr, min_precedence
             rhs = parse_expression(lexer, result, min_precedence)?;
         }
 
-        // Once the right hand has been parsed, construct an appropriate node.
-        match op_token {
-            Token::Plus => result = Box::new(Node::BinaryNode { operator: BinaryOperator::Plus, left: result, right: rhs }),
+        // Need to use Jones' trick here it seems
+        let prev_result = std::mem::replace(&mut result, rhs);
+        match cur_token {
+            Token::Plus => result = Box::new(Node::BinaryNode{ operator : BinaryOperator::Plus, left : prev_result, right : rhs}),
             _ => return Err(ParserError::UnexpectedOperand),
-        }
-
-        op_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
-        op_info = operator_lookup(op_token)?;
-    
+        } 
     }
-
-    return Ok(result);
 }
 
 

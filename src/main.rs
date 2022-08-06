@@ -3,7 +3,6 @@ use std::env;
 use std::fs;
 
 mod lexer;
-mod parser;
 
 use lexer::*;
 
@@ -37,7 +36,7 @@ fn main() {
 
                 //let lexer = lexer::Lexer{char_stream : contents.chars().peekable()};
 
-                let lexer = Lexer::new(&contents).peekable();
+                let lexer = Lexer::new(&contents);
 
                 for token in lexer {
                     println!("{:?}", token);
