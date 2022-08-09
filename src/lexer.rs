@@ -10,14 +10,12 @@ pub enum Token {
     // Arithmetic Operators
     Plus,
     Minus,
-    Mult,
     Div,
     Mod,
     Increment,
     Decrement,
     
     // Binary Operators
-    AND,
     OR,
     XOR,
     Negation,
@@ -27,6 +25,7 @@ pub enum Token {
     // Logical Operators
     ANDLogical,
     ORLogical,
+    NegationLogical,
     Equals,
     LessThan,
     GreaterThan,
@@ -80,6 +79,8 @@ pub enum Token {
     While,
 
     // Misc.
+    Asterisk,
+    Ampersand,
     Ternary,
     PtrOperand,
     Dot,
@@ -264,7 +265,7 @@ impl <'input> Lexer<'input> {
 
             '*' => {
                 lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::Mult), 
+                    fallback => return Some(Token::Asterisk), 
                     '=' => return Some(Token::MultAssign)  
                 );
             }
@@ -309,7 +310,7 @@ impl <'input> Lexer<'input> {
 
             '&' => {
                 lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::AND), 
+                    fallback => return Some(Token::Ampersand), 
                     '&' => return Some(Token::ANDLogical),  
                     '=' => return Some(Token::ANDAssign)  
                 );
@@ -346,9 +347,10 @@ impl <'input> Lexer<'input> {
                 );
             } 
 
+
             '!' => {
                 lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::Negation), 
+                    fallback => return Some(Token::NegationLogical), 
                     '=' => return Some(Token::NegationAssign)
                 );
             }
@@ -359,6 +361,7 @@ impl <'input> Lexer<'input> {
                     '=' => return Some(Token::Equals)
                 );
             }
+            '~' => return Some(Token::Negation),
             '?' => return Some(Token::Ternary),
             '.' => return Some(Token::Dot),
             ';' => return Some(Token::Semicolon),

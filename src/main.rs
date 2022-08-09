@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 
 mod lexer;
+mod parser;
 
 use lexer::*;
 
@@ -21,8 +22,16 @@ fn main() {
                 Ok(_n) => {
                     let lexer = Lexer::new(&input);
 
-                    for cur_token in lexer { 
+                    for cur_token in Lexer::new(&input) { 
                         println!("{:?} ", cur_token);
+                    }
+
+                    match parser::parse_expression(&mut lexer.peekable(), 0) {
+                        Ok(node) => {
+                            println!("Parsed expr.");
+                            parser::print_ast(node);
+                        }
+                        Err(e) => println!("Error {e:?}"),
                     }
                 },
                 Err(e) => println!("Error: {e}"),
@@ -38,9 +47,12 @@ fn main() {
 
                 let lexer = Lexer::new(&contents);
 
+                parser::parse_expression(&mut lexer.peekable(), 0);
+                /*
                 for token in lexer {
                     println!("{:?}", token);
                 }
+                */
             }
 
             Err(e) => {
