@@ -92,7 +92,7 @@ fn operator_lookup(token : &Token) -> Result<OperatorInfo, ParserError> {
 fn expect_token(lexer : &mut Peekable<Lexer>, expect : Token) -> Result<(), ParserError> {
     let cur_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
 
-    if cur_token != expect {
+    if cur_token == expect {
         return Ok(());
     } else {
         return Err(ParserError::UnexpectedToken(cur_token));
@@ -149,16 +149,17 @@ fn parse_postfix(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
     // The common left-recursion issue can be circumvented by realizing that
     // a postfix expression must begin with a primary expression
     let primary = parse_primary(lexer)?;
-    let cur_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
+    let cur_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
     match cur_token {
         Token::LBracket => {
+            lexer.next();
             let index = parse_expression(lexer, 0)?;
             expect_token(lexer, Token::RBracket)?;
             let node = Node::ArrayIndex(ArrayIndexNode { lvalue : primary, index });
             return Ok(NodePtr::new(node));
         }
         
-        _ => return Err(ParserError::UnexpectedToken(cur_token)),
+        _ => return Ok(primary),
     }
 }
 
@@ -171,12 +172,12 @@ fn parse_postfix(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
 // 	| SIZEOF '(' type_name ')'
 fn parse_unary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
    
-    //TODO: This needs to be a peek.
-    let token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
-    match token {
+    match lexer.peek().ok_or(ParserError::EarlyLexerTermination)? {
         Token::IntegerLiteral(n) => {
-            lexer.next();
+            // The weird ordering here is because n is a reference to the peeked
+            // value, thus .next cannot be called before.
             let node = Node::Terminal(Token::IntegerLiteral(*n));
+            lexer.next();
             return Ok(Box::new(node));
         }
 
@@ -184,11 +185,12 @@ fn parse_unary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
         Token::Plus | Token::Minus | Token::Negation => {
             //TODO: casting. Currently this calls a unary expression
             // but a unary expression does not allow for casting.
+            let token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
             let operand = parse_unary(lexer)?;
 
             let node = Node::Prefix(
                 UnaryNode { 
-                    operator : *token,
+                    operator : token,
                     operand,
                 });
             
@@ -197,6 +199,7 @@ fn parse_unary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
 
         Token::Sizeof => {
             // TODO: Evaluate sizeof as a constant immediately!
+            lexer.next();
             let cur_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
             if cur_token == Token::LParen {
                 // Sizeof on type
@@ -221,7 +224,7 @@ fn parse_unary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
 
                 let node = Node::Prefix(
                     UnaryNode { 
-                        operator : *token,
+                        operator : Token::Sizeof,
                         operand,
                     });
                 
