@@ -51,25 +51,57 @@ pub enum Node {
     Empty,
 }
 
+impl fmt::Display for Node {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Node::Binary(n) => write!(f, "B{:?}", n.operator),
+            Node::Prefix(n) => write!(f, "Prefix {:?}", n.operator),
+            Node::Postfix(n) => write!(f, "Postfix {:?}", n.operator),
+            Node::ArrayIndex(n) => write!(f, "Array Index"),
+            Node::Terminal(t) => write!(f, "{:?}", t),
+            Node::Empty => write!(f, "Empty"),
+            _ => write!(f, "Unknown Node"),
+
+        }
+    }
+}
+
 
 struct OperatorInfo {
     precedence : u8,
     left_associative : bool,
 }
 
-pub fn print_ast(start : NodePtr) {
-    println!("Node: {:?}", start.deref());
+pub fn print_ast(start : NodePtr, prefix : String, isLast : bool) {
 
+    print!("{}", prefix);
+
+
+    let mut new_prefix : String = prefix;
+    if isLast {
+        print!("└──");
+        new_prefix.push_str("    ");
+    } else {
+        print!("├──");
+        new_prefix.push_str("│  ");
+    }
+
+    println!("{}", start.deref());
+    
     match *start {
         Node::Binary(node) => {
-            print_ast(node.left);
-            print_ast(node.right);
+            print_ast(node.left, new_prefix.clone(), false);
+            print_ast(node.right, new_prefix, true);
         }
         Node::Prefix(node) => {
-            print_ast(node.operand);
+            print_ast(node.operand, new_prefix, true);
         }
         Node::Postfix(node) => {
-            print_ast(node.operand);
+            print_ast(node.operand, new_prefix, true);
+        }
+        Node::ArrayIndex(node) => {
+            print_ast(node.lvalue, new_prefix.clone(), false);
+            print_ast(node.index, new_prefix, true);
         }
         _ => return,
     }
@@ -149,6 +181,8 @@ fn parse_postfix(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
     // The common left-recursion issue can be circumvented by realizing that
     // a postfix expression must begin with a primary expression
     let primary = parse_primary(lexer)?;
+
+    // TODO: We need to loop postfix operators here.
     let cur_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
     match cur_token {
         Token::LBracket => {

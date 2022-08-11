@@ -29,7 +29,7 @@ fn main() {
                     match parser::parse_expression(&mut lexer.peekable(), 0) {
                         Ok(node) => {
                             println!("Parsed expr.");
-                            parser::print_ast(node);
+                            parser::print_ast(node, String::new(), true);
                         }
                         Err(e) => println!("Error {e:?}"),
                     }
