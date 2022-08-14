@@ -1,4 +1,4 @@
-use std::{iter::Peekable, fmt, error::Error, ops::{Deref, DerefMut}};
+use std::{iter::Peekable, fmt, error::Error, ops::{Deref}};
 use crate::lexer::*;
 
 #[derive(Debug)]
@@ -6,9 +6,7 @@ pub enum ParserError {
     NotImplemented,
     UnexpectedToken(Token),
     EarlyLexerTermination,
-    UnknownPrecedence,
-    UnexpectedOperator,
-    UnexpectedOperand,
+    UnknownPrecedence(Token),
 }
 
 impl Error for ParserError {}
@@ -41,25 +39,66 @@ pub struct ArrayIndexNode {
 }
 
 #[derive(Clone, Debug)]
+pub struct DeclarationNode {
+    declaration_specifiers : NodePtr,
+    init_declarator_list : NodePtr,
+}
+
+#[derive(Clone, Debug)]
+pub struct DeclaratorNode {
+    // TODO: Add pointer derived type
+    // int (*p[4]) (int x, int y); 
+    // "identifier p is an array of 4 of pointers to ..." Layer 1
+    // " ... a function taking two ints returning int" Layer 2
+
+    // What the declarator is "modifying". In most cases this would be an 
+    // identifier, but could also be another declarator node!
+    base : NodePtr,
+
+    // Pointer to postfix derived type node (either an array or function declarator)
+    // which specifies how this declarator node is modifying the base.
+    //
+    postfix_derived_type : NodePtr,
+}
+
+#[derive(Clone, Debug)]
 pub enum Node { 
-    Binary(BinaryNode),
+    Infix(BinaryNode),
     Prefix(UnaryNode),
     Postfix(UnaryNode),
 
     ArrayIndex(ArrayIndexNode),
     Terminal(Token),
+ 
+    Declaration(DeclarationNode),
+    DeclarationSpecifiers(Vec<NodePtr>),
+    TypeQualifier(Token),
+    TypeSpecifier(Token),
+    _StorageSpecifier(Token),
+
+    ArrayDeclarator(DeclaratorNode),
+    FunctionDeclarator(DeclaratorNode),
+
     Empty,
 }
 
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Node::Binary(n) => write!(f, "B{:?}", n.operator),
+            Node::Infix(n) => write!(f, "I{:?}", n.operator),
             Node::Prefix(n) => write!(f, "Prefix {:?}", n.operator),
             Node::Postfix(n) => write!(f, "Postfix {:?}", n.operator),
-            Node::ArrayIndex(n) => write!(f, "Array Index"),
+            Node::ArrayIndex(_) => write!(f, "Array Index"),
             Node::Terminal(t) => write!(f, "{:?}", t),
+
+            Node::Declaration(_) => write!(f, "Declaration"),
+            Node::DeclarationSpecifiers(_) => write!(f, "Declaration Specifiers"),
+            Node::TypeSpecifier(t) => write!(f, "{:?}", t),
+            Node::TypeQualifier(t) => write!(f, "{:?}", t),
+            Node::_StorageSpecifier(t) => write!(f, "{:?}", t),
             Node::Empty => write!(f, "Empty"),
+
+            Node::FunctionDeclarator(n) => write!(f, "Func Declarator"),
             _ => write!(f, "Unknown Node"),
 
         }
@@ -72,13 +111,13 @@ struct OperatorInfo {
     left_associative : bool,
 }
 
-pub fn print_ast(start : NodePtr, prefix : String, isLast : bool) {
+pub fn print_ast(start : NodePtr, prefix : String, is_last : bool) {
 
     print!("{}", prefix);
 
 
     let mut new_prefix : String = prefix;
-    if isLast {
+    if is_last {
         print!("└──");
         new_prefix.push_str("    ");
     } else {
@@ -89,7 +128,7 @@ pub fn print_ast(start : NodePtr, prefix : String, isLast : bool) {
     println!("{}", start.deref());
     
     match *start {
-        Node::Binary(node) => {
+        Node::Infix(node) => {
             print_ast(node.left, new_prefix.clone(), false);
             print_ast(node.right, new_prefix, true);
         }
@@ -103,20 +142,81 @@ pub fn print_ast(start : NodePtr, prefix : String, isLast : bool) {
             print_ast(node.lvalue, new_prefix.clone(), false);
             print_ast(node.index, new_prefix, true);
         }
+        Node::DeclarationSpecifiers(specifier_list) => {
+
+            for n in 0..(specifier_list.len() - 1) {
+                print_ast(specifier_list[n].clone(), new_prefix.clone(), false);
+            }
+            print_ast(specifier_list[specifier_list.len() - 1].clone(), new_prefix, true);
+        }
+        Node::FunctionDeclarator(node) => {
+            print_ast(node.base, new_prefix.clone(), false);
+            print_ast(node.postfix_derived_type, new_prefix, true);
+        }
+
+        Node::Declaration(node) => {
+            print_ast(node.declaration_specifiers, new_prefix.clone(), false);
+            print_ast(node.init_declarator_list, new_prefix, true);
+        }
         _ => return,
     }
 }
 
+
+// Lookup table for binary operators
+// https://en.cppreference.com/w/c/language/operator_precedence
 fn operator_lookup(token : &Token) -> Result<OperatorInfo, ParserError> {
     match token {
         Token::Asterisk | Token::Div | Token::Mod => {
-            return Result::Ok(OperatorInfo{precedence : 90, left_associative : true});
+            return Result::Ok(OperatorInfo{precedence : 200, left_associative : true});
         }
 
         Token::Plus | Token::Minus => {
-            return Result::Ok(OperatorInfo{precedence : 80, left_associative : true});
+            return Result::Ok(OperatorInfo{precedence : 190, left_associative : true});
         }
-        _ => return Result::Err(ParserError::UnknownPrecedence),
+        
+        Token::LeftShift | Token::RightShift => {
+            return Result::Ok(OperatorInfo{precedence : 180, left_associative : true});
+        }
+
+        Token::LessThan | Token::LessThanOrEq | Token::GreaterThan | Token::GreaterThanOrEq => {
+            return Result::Ok(OperatorInfo{precedence : 170, left_associative : true});
+        }
+
+        Token::Equals | Token::NotEquals => {
+            return Result::Ok(OperatorInfo{precedence : 160, left_associative : true});
+        }
+
+        Token::Ampersand => { // bitwise AND
+            return Result::Ok(OperatorInfo{precedence : 150, left_associative : true});
+        }
+
+        Token::XOR => { // bitwise XOR
+            return Result::Ok(OperatorInfo{precedence : 140, left_associative : true});
+        }
+
+        Token::OR => { // bitwise OR
+            return Result::Ok(OperatorInfo{precedence : 130, left_associative : true});
+        }
+
+        Token::ANDLogical => { 
+            return Result::Ok(OperatorInfo{precedence : 120, left_associative : true});
+        }
+
+        Token::ORLogical => { 
+            return Result::Ok(OperatorInfo{precedence : 110, left_associative : true});
+        }
+
+        // TODO: Ternary 
+        
+        Token::Assign | Token::PlusAssign | Token::MinusAssign |
+        Token::MultAssign | Token::DivAssign | Token::ModAssign |
+        Token::LeftShiftAssign | Token::RightShiftAssign |
+        Token::ANDAssign | Token::XORAssign | Token::ORAssign=> {
+            return Result::Ok(OperatorInfo{precedence : 90, left_associative : false});
+        }
+
+        _ => return Result::Err(ParserError::UnknownPrecedence(token.clone())),
     }
 }
 
@@ -131,18 +231,6 @@ fn expect_token(lexer : &mut Peekable<Lexer>, expect : Token) -> Result<(), Pars
     }
 }
 
-fn parse_type(lexer : &mut Peekable<Lexer>) -> Result<Token, ParserError> {
-    let cur_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
-    match cur_token {
-        Token::Float | Token::Int | Token::Double => {
-            return Ok(cur_token);
-        }
-        _ => {
-            // Handle user defined types
-            return Err(ParserError::NotImplemented);
-        }
-    }
-}
 
 // primary_expression
 // 	: IDENTIFIER
@@ -158,7 +246,7 @@ fn parse_primary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
         }
 
         Token::LParen => {
-            let expr = parse_expression(lexer, 0)?;
+            let expr = parse_expr(lexer, 0)?;
             expect_token(lexer, Token::RParen)?; 
             return Ok(expr);
         }
@@ -178,23 +266,37 @@ fn parse_primary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
 // 	| postfix_expression INC_OP
 // 	| postfix_expression DEC_OP
 fn parse_postfix(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+    
     // The common left-recursion issue can be circumvented by realizing that
     // a postfix expression must begin with a primary expression
-    let primary = parse_primary(lexer)?;
+    let mut primary : NodePtr = parse_primary(lexer)?;
+
+
+    // ... followed by an arbitrary amount of postfix operators.
+    loop {
+        let cur_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
+
+        match cur_token {
+            Token::LBracket => { // Array Index
+                lexer.next();
+                let index = parse_expr(lexer, 0)?;
+                expect_token(lexer, Token::RBracket)?;
+                let new_primary = Node::ArrayIndex(ArrayIndexNode { lvalue : primary, index });
+                primary = NodePtr::new(new_primary);
+            }
+
+            Token::Increment | Token::Decrement => {
+                let operator = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
+
+                let new_primary = Node::Postfix(UnaryNode{ operator, operand : primary });
+                primary = NodePtr::new(new_primary);
+            }
+            
+            _ => return Ok(primary),
+        }
+    }
 
     // TODO: We need to loop postfix operators here.
-    let cur_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
-    match cur_token {
-        Token::LBracket => {
-            lexer.next();
-            let index = parse_expression(lexer, 0)?;
-            expect_token(lexer, Token::RBracket)?;
-            let node = Node::ArrayIndex(ArrayIndexNode { lvalue : primary, index });
-            return Ok(NodePtr::new(node));
-        }
-        
-        _ => return Ok(primary),
-    }
 }
 
 // unary_expression
@@ -272,9 +374,9 @@ fn parse_unary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
     }
 }
 
-pub fn parse_expression(lexer : &mut Peekable<Lexer>, min_precedence : u8) -> Result<NodePtr, ParserError>{
+pub fn parse_expr(lexer : &mut Peekable<Lexer>, min_precedence : u8) -> Result<NodePtr, ParserError>{
     // Find next atom
-    let mut result : NodePtr = parse_unary(lexer)?;
+    let mut expr : NodePtr = parse_unary(lexer)?;
     
     loop {
         let peek_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
@@ -282,29 +384,208 @@ pub fn parse_expression(lexer : &mut Peekable<Lexer>, min_precedence : u8) -> Re
         if let Ok(op_info) = operator_lookup(peek_token) {
             
             if op_info.precedence < min_precedence {
-                return Ok(result);
+                return Ok(expr);
             }
 
             let op_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
 
             let rhs : NodePtr;
             if op_info.left_associative {
-                rhs = parse_expression(lexer, min_precedence + 1)?;
+                rhs = parse_expr(lexer, min_precedence + 1)?;
             } else { 
-                rhs = parse_expression(lexer, min_precedence)?;
+                rhs = parse_expr(lexer, min_precedence)?;
             }
 
-            // Need to use Jones' trick here it seems
-            match op_token {
-                Token::Plus => result = Box::new(Node::Binary(BinaryNode{operator : Token::Plus, left : result.to_owned(), right : rhs})),
-                _ => return Err(ParserError::UnexpectedOperand),
-            } 
+            // By splitting the creation of the new expr node into two steps we avoid using Jones' trick.
+            let new_expr = Node::Infix(BinaryNode{operator : op_token, left : expr, right : rhs});
+            expr = NodePtr::new (new_expr);
         } else {
             // Peek token not recognised as operator - this is not an error,
             // as we may simply have run into the end of the expression.
-            return Ok(result);
+            return Ok(expr);
         }
     }
+}
+
+/*
+Seems like the only ways to tell apart a function_definition and a 
+declaration is by 
+1. Looking if it ends with a { or ; (this will always work)
+or
+2. Since a declaration can be an init_declarator it can contain an assignment
+(e.g. a '='), which the declarator that the function_definition uses cannot.
+However a declaration could also just be a declarator, in which case you cannot tell
+the difference.
+
+Strategy: Clearly, untill we reach the compound_statement a declaration
+is a superset of a function_definition. As such, parse under the assumption
+we have a declaration and convert it to a function definition if necessary.
+*/
+
+
+// external_declaration
+// 	: function_definition
+// 	| declaration
+// 	;
+
+fn parse_type_specifier(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+    let cur_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
+    match cur_token {
+        Token::Float | Token::Int | Token::Double => {
+            let cur_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
+            return Ok(NodePtr::new(Node::TypeSpecifier(cur_token)));
+        }
+        _ => {
+            // Handle user defined types
+            return Err(ParserError::NotImplemented);
+        }
+    }
+}
+// function_definition (without K&R syntax)
+// 	| declaration_specifiers declarator compound_statement
+// 	| declarator compound_statement (int is default return type)
+// 	;
+
+fn parse_declaration_specifier(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+    let cur_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
+    match cur_token {
+        // Token::Typedef | Token::Extern | Token::Static | Token::Auto | Token::Register
+        Token::Const | Token::Volatile => { // type qualifer
+            let cur_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
+            return Ok( NodePtr::new(Node::TypeQualifier(cur_token)));
+        }
+
+        _ => return parse_type_specifier(lexer),
+    }
+}
+
+
+
+// declaration_specifiers
+// 	: storage_class_specifier
+// 	| storage_class_specifier declaration_specifiers
+// 	| type_specifier
+// 	| type_specifier declaration_specifiers
+// 	| type_qualifier
+// 	| type_qualifier declaration_specifiers
+// 	;
+// TODO: Storage Class specifiers ignored for now
+fn parse_declaration_specifiers(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+    // We require at least one declaration specifier
+    let specifier = parse_declaration_specifier(lexer)?;
+    
+    let mut specifier_list = vec![specifier];
+    loop {
+        // Parse as many specifiers as possible
+        if let Ok(specifier) = parse_declaration_specifier(lexer) {
+            specifier_list.push(specifier);
+        } else {
+            return Ok(NodePtr::new(Node::DeclarationSpecifiers(specifier_list)))
+        }
+    }
+}
+
+
+// direct_declarator and declarator are tightly coupled as the name suggests
+// The only reason the two are split into two is to ensure that the derived
+// types [] (array of) and () (function) have a higher precedence than * (pointer to).
+// As such, direct_declarator is only ever referenced externally by declarator and
+// we can combine the parsing of the two into a single function for better 
+// readability.
+
+// direct_declarator
+// 	: IDENTIFIER
+// 	| '(' declarator ')'
+// 	| direct_declarator '[' constant_expression ']'
+// 	| direct_declarator '[' ']'
+// 	| direct_declarator '(' parameter_type_list ')'
+// 	| direct_declarator '(' identifier_list ')'
+// 	| direct_declarator '(' ')'
+
+// declarator
+// 	: pointer direct_declarator
+// 	| direct_declarator
+fn parse_declarator(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+    // TODO: implement pointer derived type
+    
+    //
+    let base: NodePtr;
+    let cur_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
+    match cur_token {
+        Token::Identifier(_) => base = NodePtr::new(Node::Terminal(cur_token)),
+        Token::LParen => {
+            base = parse_declarator(lexer)?;
+            expect_token(lexer, Token::RParen)?;
+        }
+        _ => return Err(ParserError::UnexpectedToken(cur_token)),
+    }
+
+    
+    // Each "layer" of a declarator can only contain one derived type:
+    // 1. [Base] is an array of ...
+    // 2. [Base] is a function returning...
+    // The former of two can be repeated more than once in a declarator layer,
+    // the latter cannot.
+    match lexer.next().ok_or(ParserError::EarlyLexerTermination)? {
+        Token::LParen => { // function declaration
+            let postfix_derived_type = NodePtr::new(Node::Empty);
+
+            // TODO: Implement parameter_type_list and identifier_list
+            expect_token(lexer, Token::RParen).map_err(|_| ParserError::NotImplemented)?;
+            
+            let declarator_node = Node::FunctionDeclarator(DeclaratorNode{ base, postfix_derived_type});
+            return Ok(NodePtr::new(declarator_node));
+        }
+        Token::LBracket => {
+            // TODO: Implement array declaration.
+            return Err(ParserError::NotImplemented);
+        }
+        _ => return Ok(base),
+    }
+
+}
+
+
+//init_declarator
+//	: declarator
+//	| declarator '=' initializer
+//	;
+fn parse_init_declarator(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+    // TODO: implement initializer
+    return parse_declarator(lexer);
+}
+
+//init_declarator_list
+//	: init_declarator
+//	| init_declarator_list ',' init_declarator
+//	;
+
+fn parse_init_declarator_list(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+    // TODO: Implement init_declarator_list
+    return parse_init_declarator(lexer);
+}
+
+
+// declaration
+// 	: declaration_specifiers ';'
+// 	| declaration_specifiers init_declarator_list ';'
+// 	;
+// e.g. void; int a = 3;
+pub fn parse_declaration(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+    let declaration_specifiers : NodePtr = parse_declaration_specifiers(lexer)?;
+    let init_declarator_list : NodePtr;
+
+    match lexer.peek().ok_or(ParserError::EarlyLexerTermination)? {
+        Token::Semicolon => {
+            lexer.next();
+            init_declarator_list = NodePtr::new(Node::Empty);
+        }
+        _ => {
+            init_declarator_list = parse_init_declarator_list(lexer)?;
+        }
+    }
+
+    return Ok(NodePtr::new(Node::Declaration(DeclarationNode{declaration_specifiers, init_declarator_list} ) ));
 }
 
 

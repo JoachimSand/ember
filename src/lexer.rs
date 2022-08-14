@@ -27,6 +27,7 @@ pub enum Token {
     ORLogical,
     NegationLogical,
     Equals,
+    NotEquals,
     LessThan,
     GreaterThan,
     LessThanOrEq,
@@ -42,7 +43,8 @@ pub enum Token {
     ANDAssign,
     ORAssign,
     XORAssign,
-    NegationAssign,
+    LeftShiftAssign,
+    RightShiftAssign,
 
     // Keywords
     Auto, 
@@ -334,7 +336,12 @@ impl <'input> Lexer<'input> {
             '<' => {
                 lex_operand!(chars = self.char_stream, 
                     fallback => return Some(Token::LessThan), 
-                    '<' => return Some(Token::LeftShift),  
+                    '<' => {
+                        lex_operand!(chars = self.char_stream, 
+                            fallback => return Some(Token::LeftShift),
+                            '=' => return Some(Token::LeftShiftAssign)
+                        );
+                    },  
                     '=' => return Some(Token::LessThanOrEq)  
                 );
             }
@@ -342,7 +349,12 @@ impl <'input> Lexer<'input> {
             '>' => {
                 lex_operand!(chars = self.char_stream, 
                     fallback => return Some(Token::GreaterThan), 
-                    '>' => return Some(Token::RightShift),  
+                    '>' => {
+                        lex_operand!(chars = self.char_stream, 
+                            fallback => return Some(Token::RightShift),
+                            '=' => return Some(Token::RightShiftAssign)
+                        );
+                    },  
                     '=' => return Some(Token::GreaterThanOrEq)
                 );
             } 
@@ -351,7 +363,7 @@ impl <'input> Lexer<'input> {
             '!' => {
                 lex_operand!(chars = self.char_stream, 
                     fallback => return Some(Token::NegationLogical), 
-                    '=' => return Some(Token::NegationAssign)
+                    '=' => return Some(Token::NotEquals)
                 );
             }
 

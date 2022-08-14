@@ -26,9 +26,10 @@ fn main() {
                         println!("{:?} ", cur_token);
                     }
 
-                    match parser::parse_expression(&mut lexer.peekable(), 0) {
+                    match parser::parse_declaration(&mut lexer.peekable()) {
                         Ok(node) => {
-                            println!("Parsed expr.");
+                            println!("Parsed declaration.");
+                            println!("{:?}", node);
                             parser::print_ast(node, String::new(), true);
                         }
                         Err(e) => println!("Error {e:?}"),
@@ -47,7 +48,7 @@ fn main() {
 
                 let lexer = Lexer::new(&contents);
 
-                parser::parse_expression(&mut lexer.peekable(), 0);
+                parser::parse_expr(&mut lexer.peekable(), 0);
                 /*
                 for token in lexer {
                     println!("{:?}", token);
