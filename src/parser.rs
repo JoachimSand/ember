@@ -61,6 +61,14 @@ pub struct DeclaratorNode {
     postfix_derived_type : NodePtr,
 }
 
+
+#[derive(Clone, Debug)]
+pub struct InitDeclaratorNode {
+    declarator : NodePtr,
+    initializer : NodePtr,
+}
+
+
 #[derive(Clone, Debug)]
 pub enum Node { 
     Infix(BinaryNode),
@@ -76,6 +84,7 @@ pub enum Node {
     TypeSpecifier(Token),
     _StorageSpecifier(Token),
 
+    InitDeclarator(InitDeclaratorNode),
     ArrayDeclarator(DeclaratorNode),
     FunctionDeclarator(DeclaratorNode),
 
@@ -98,7 +107,8 @@ impl fmt::Display for Node {
             Node::_StorageSpecifier(t) => write!(f, "{:?}", t),
             Node::Empty => write!(f, "Empty"),
 
-            Node::FunctionDeclarator(n) => write!(f, "Func Declarator"),
+            Node::InitDeclarator(_) => write!(f, "Init Declarator"),
+            Node::FunctionDeclarator(_) => write!(f, "Func Declarator"),
             _ => write!(f, "Unknown Node"),
 
         }
@@ -157,6 +167,11 @@ pub fn print_ast(start : NodePtr, prefix : String, is_last : bool) {
         Node::Declaration(node) => {
             print_ast(node.declaration_specifiers, new_prefix.clone(), false);
             print_ast(node.init_declarator_list, new_prefix, true);
+        }
+
+        Node::InitDeclarator(node) => {
+            print_ast(node.declarator, new_prefix.clone(), false);
+            print_ast(node.initializer, new_prefix, true);
         }
         _ => return,
     }
@@ -407,6 +422,26 @@ pub fn parse_expr(lexer : &mut Peekable<Lexer>, min_precedence : u8) -> Result<N
     }
 }
 
+//initializer
+//	: assignment_expression
+//	| '{' initializer_list '}'
+//	| '{' initializer_list ',' '}'
+//	;
+fn parse_initializer(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+    match lexer.peek().ok_or(ParserError::EarlyLexerTermination)? {
+        Token::LCurlyBracket => {
+            lexer.next();
+            // TODO: Implement initializer_list
+
+            return Err(ParserError::NotImplemented);
+        }
+
+        _ => return parse_expr(lexer, 0),
+    }
+}
+
+
+
 /*
 Seems like the only ways to tell apart a function_definition and a 
 declaration is by 
@@ -512,7 +547,9 @@ fn parse_declarator(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError
     let base: NodePtr;
     let cur_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
     match cur_token {
-        Token::Identifier(_) => base = NodePtr::new(Node::Terminal(cur_token)),
+        Token::Identifier(_) => {
+            base = NodePtr::new(Node::Terminal(cur_token)); 
+        }
         Token::LParen => {
             base = parse_declarator(lexer)?;
             expect_token(lexer, Token::RParen)?;
@@ -526,8 +563,9 @@ fn parse_declarator(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError
     // 2. [Base] is a function returning...
     // The former of two can be repeated more than once in a declarator layer,
     // the latter cannot.
-    match lexer.next().ok_or(ParserError::EarlyLexerTermination)? {
+    match lexer.peek().ok_or(ParserError::EarlyLexerTermination)? {
         Token::LParen => { // function declaration
+            lexer.next();
             let postfix_derived_type = NodePtr::new(Node::Empty);
 
             // TODO: Implement parameter_type_list and identifier_list
@@ -552,7 +590,21 @@ fn parse_declarator(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError
 //	;
 fn parse_init_declarator(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
     // TODO: implement initializer
-    return parse_declarator(lexer);
+    let declarator = parse_declarator(lexer)?;
+    match lexer.peek().ok_or(ParserError::EarlyLexerTermination)? {
+        Token::Assign => {
+            lexer.next();
+            let initializer = parse_initializer(lexer)?;
+            let init_declarator = Node::InitDeclarator(InitDeclaratorNode{ declarator, initializer});
+            return Ok(NodePtr::new(init_declarator));
+        }
+
+        _ => {
+
+            print_ast(declarator.clone(), "".to_string(), true);
+            return Ok(declarator);
+        }
+    }
 }
 
 //init_declarator_list
