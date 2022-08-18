@@ -26,9 +26,9 @@ fn main() {
                         println!("{:?} ", cur_token);
                     }
 
-                    match parser::parse_declaration(&mut lexer.peekable()) {
+                    match parser::parse_external_declaration(&mut lexer.peekable()) {
                         Ok(node) => {
-                            println!("Parsed declaration.");
+                            println!("Parsed external declaration.");
                             println!("{:?}", node);
                             parser::print_ast(node, String::new(), true);
                         }
