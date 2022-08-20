@@ -4,8 +4,10 @@ use std::str::Chars;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Identifier(String),
-    DoubleLiteral(f64),
+
     IntegerLiteral(i64),
+    FloatLiteral(f32),
+    DoubleLiteral(f64),
 
     // Arithmetic Operators
     Plus,
@@ -128,12 +130,11 @@ macro_rules! lex_operand {
 
 pub struct Lexer<'input> {
     char_stream : Peekable<Chars<'input>>,
-    prev_token_multiplicand : bool,
 }
 
 impl <'input> Lexer<'input> {
     pub fn new(contents : &'input str) -> Self {
-        Lexer { char_stream : contents.chars().peekable(), prev_token_multiplicand : false }
+        Lexer { char_stream : contents.chars().peekable() }
     }
 
     fn advance_tokens(&mut self) -> Option<Token> {    
@@ -219,33 +220,37 @@ impl <'input> Lexer<'input> {
                 let num_literal_str = &mut String::new();
                 num_literal_str.push(first_char);
 
-                let mut is_int : bool = true;
-                loop {
-                    match self.char_stream.peek() {
-                        Some(c) => {
-                            if c.is_ascii_digit() || matches!(c, '.') {
-                                
-                                if *c == '.' {
-                                    is_int = false;
-                                }
+                enum LiteralType {
+                    Int,
+                    Float,
+                    Double,
+                }
 
-                                num_literal_str.push(*c); 
-                                self.char_stream.next();
+                let mut l_type = LiteralType::Int;
 
-                            } else {
-                                break;
-                            }
+                while let Some(c) = self.char_stream.peek() {
+                    if c.is_ascii_digit() || matches!(c, '.') {
+                        num_literal_str.push(*c); 
+                        
+                        if *c == '.' {
+                            l_type = LiteralType::Double;
                         }
-
-                        None => break,
-                    }    
+                        self.char_stream.next();
+                    } else {
+                        if *c == 'f' {
+                            self.char_stream.next();
+                            l_type = LiteralType::Float;
+                        }
+                        break;
+                    }
                 }
 
-                if is_int {
-                    return Some(Token::IntegerLiteral(num_literal_str.parse().ok()?));
-                } else {
-                    return Some(Token::DoubleLiteral(num_literal_str.parse().ok()?));
+                match l_type {
+                    LiteralType::Int => return Some(Token::IntegerLiteral(num_literal_str.parse().ok()?)),
+                    LiteralType::Float => return Some(Token::FloatLiteral(num_literal_str.parse::<f32>().ok()?)),
+                    LiteralType::Double => return Some(Token::DoubleLiteral(num_literal_str.parse::<f64>().ok()?))
                 }
+
             }
 
             '+' => {
@@ -404,7 +409,8 @@ impl <'input> Iterator for Lexer <'input> {
 
     fn next(&mut self) -> Option<Token> {    
 
-        self.prev_token_multiplicand = false;
-        return self.advance_tokens();
+        let token = self.advance_tokens();
+        println!("{:?}", token);
+        return token;
     }
 }

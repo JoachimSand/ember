@@ -26,9 +26,9 @@ fn main() {
                         println!("{:?} ", cur_token);
                     }
 
-                    match parser::parse_external_declaration(&mut lexer.peekable()) {
+                    match parser::parse_translational_unit(&mut lexer.peekable()) {
                         Ok(node) => {
-                            println!("Parsed external declaration.");
+                            println!("Parsed translation_unit.");
                             println!("{:?}", node);
                             parser::print_ast(node, String::new(), true);
                         }
@@ -39,21 +39,25 @@ fn main() {
             };
         }     
     } else if args.len() == 2 {
-        let filename = &args[0];
+        let filename = &args[1];
 
         match fs::read_to_string(filename) {
             Ok(contents) => {
 
-                //let lexer = lexer::Lexer{char_stream : contents.chars().peekable()};
-
+                for cur_token in Lexer::new(&contents) { 
+                    println!("{:?} ", cur_token);
+                }
+                
                 let lexer = Lexer::new(&contents);
 
-                parser::parse_expr(&mut lexer.peekable(), 0);
-                /*
-                for token in lexer {
-                    println!("{:?}", token);
+                match parser::parse_translational_unit(&mut lexer.peekable()) {
+                    Ok(node) => {
+                        println!("Parsed translation_unit from file.");
+                        println!("{:?}\n", node);
+                        parser::print_ast(node, String::new(), true);
+                    }
+                    Err(e) => println!("Error {e:?}"),
                 }
-                */
             }
 
             Err(e) => {

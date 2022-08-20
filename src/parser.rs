@@ -78,7 +78,7 @@ pub struct InitDeclaratorNode {
 
 #[derive(Clone, Debug)]
 pub enum Node {
-
+    TranslationalUnit{external_declarations : Vec<NodePtr>},
     FunctionDefinition{ declaration_specifiers : NodePtr, declarator : NodePtr, compound_statement : NodePtr},
     CompoundStatement{ declaration_list : NodePtr, statement_list : NodePtr},
 
@@ -104,16 +104,16 @@ pub enum Node {
 
     FunctionCall(FunctionCallNode),
     ArrayIndex(ArrayIndexNode),
+    
     Terminal(Token),
  
-
-
     Empty,
 }
 
 impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Node::TranslationalUnit{..} => write!(f, "Translational Unit"),
             Node::FunctionDefinition{..} => write!(f, "Function Definition"),
             Node::CompoundStatement{..} => write!(f, "Compound Statement"),
             Node::DeclarationList(_) => write!(f, "Declaration List"),
@@ -178,10 +178,7 @@ pub fn print_ast(start : NodePtr, prefix : String, is_last : bool) {
         }
 
         // quite possibly the coolest Rust syntax I have encountered so far
-        Node::DeclarationList(list) | Node::StatementList(list) | Node::DeclarationSpecifiers(list) => {
-            
-            
-
+        Node::DeclarationList(list) | Node::StatementList(list) | Node::DeclarationSpecifiers(list) | Node::TranslationalUnit { external_declarations: list @ _ }=> {
             let mut iter = list.iter().peekable();
 
             while let Some(node) = iter.next() {
@@ -310,7 +307,7 @@ fn expect_token(lexer : &mut Peekable<Lexer>, expect : Token) -> Result<Token, P
 fn parse_primary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
     let cur_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
     match cur_token {
-        Token::Identifier(_) | Token::IntegerLiteral(_) => {
+        Token::Identifier(_) | Token::IntegerLiteral(_) | Token::FloatLiteral(_) | Token::DoubleLiteral(_) => {
             return Ok(Box::new(Node::Terminal(cur_token)));
         }
 
@@ -385,13 +382,12 @@ fn parse_postfix(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
 // 	| SIZEOF unary_expression
 // 	| SIZEOF '(' type_name ')'
 fn parse_unary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
-   
-    match lexer.peek().ok_or(ParserError::EarlyLexerTermination)? {
-        Token::IntegerLiteral(n) => {
-            // The weird ordering here is because n is a reference to the peeked
-            // value, thus .next cannot be called before.
-            let node = Node::Terminal(Token::IntegerLiteral(*n));
-            lexer.next();
+    
+    let peek_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?; 
+    match peek_token {
+        Token::IntegerLiteral(_) | Token::FloatLiteral(_) | Token::DoubleLiteral(_) => {
+            let token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
+            let node = Node::Terminal(token);
             return Ok(Box::new(node));
         }
 
@@ -452,7 +448,7 @@ fn parse_unary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
     }
 }
 
-pub fn parse_expr(lexer : &mut Peekable<Lexer>, min_precedence : u8) -> Result<NodePtr, ParserError>{
+fn parse_expr(lexer : &mut Peekable<Lexer>, min_precedence : u8) -> Result<NodePtr, ParserError>{
     // Find next atom
     let mut expr : NodePtr = parse_unary(lexer)?;
     
@@ -652,7 +648,7 @@ fn parse_init_declarator_list(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, P
 // 	| declaration_specifiers init_declarator_list ';'
 // 	;
 // e.g. void; int a = 3;
-pub fn parse_declaration(lexer : &mut Peekable<Lexer>, consume_semicolon : bool) -> Result<NodePtr, ParserError> {
+fn parse_declaration(lexer : &mut Peekable<Lexer>, consume_semicolon : bool) -> Result<NodePtr, ParserError> {
     let declaration_specifiers : NodePtr = parse_declaration_specifiers(lexer)?;
     let init_declarator_list : NodePtr;
 
@@ -663,7 +659,7 @@ pub fn parse_declaration(lexer : &mut Peekable<Lexer>, consume_semicolon : bool)
     }
 
     if consume_semicolon {
-        expect_token(lexer, Token::Semicolon);
+        expect_token(lexer, Token::Semicolon)?;
     }
 
     return Ok(NodePtr::new(Node::Declaration(DeclarationNode{declaration_specifiers, init_declarator_list} ) ));
@@ -695,7 +691,7 @@ fn parse_declaration_list(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, Parse
 //	| iteration_statement
 //	| jump_statement
 //	;
-fn parse_statement(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+pub fn parse_statement(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
     let peek_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?;
 
     match peek_token {
@@ -721,7 +717,7 @@ fn parse_statement(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>
             match possible_id_token {
                 Token::Identifier(_) => {
                     let node = Node::Goto{ identifier : possible_id_token };
-                    expect_token(lexer, Token::Semicolon);
+                    expect_token(lexer, Token::Semicolon)?;
                     return Ok(NodePtr::new(node));
                 }
                 _ => return Err(ParserError::UnexpectedToken(possible_id_token)),
@@ -748,7 +744,7 @@ fn parse_statement(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>
             }
         }
 
-
+        Token::LCurlyBracket => return parse_compound_statement(lexer),
         
 
         //expression_statement
@@ -848,7 +844,7 @@ we have a declaration and convert it to a function definition if necessary.
 // 	: function_definition
 // 	| declaration
 // 	;
-pub fn parse_external_declaration(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+fn parse_external_declaration(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
     let declaration = parse_declaration(lexer, false)?;    
    
     let peek_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?; 
@@ -886,4 +882,24 @@ pub fn parse_external_declaration(lexer : &mut Peekable<Lexer>) -> Result<NodePt
             return Err(ParserError::UnexpectedToken(peek_token.clone()));
         }
     }
+}
+
+//translation_unit
+//	: external_declaration
+//	| translation_unit external_declaration
+//	;
+pub fn parse_translational_unit(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+
+    // a translation_unit must have at least one external_declaration according to the grammar
+    let first_declaration = parse_external_declaration(lexer)?;
+    let mut external_declarations = vec![first_declaration];
+
+    while lexer.peek().is_some() {
+        let declaration = parse_external_declaration(lexer)?;
+        external_declarations.push(declaration);
+    }
+
+    let translation_unit = Node::TranslationalUnit { external_declarations };
+    return Ok(NodePtr::new(translation_unit));
+
 }
