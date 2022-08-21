@@ -6,4 +6,6 @@ int main() {
     }
 }
 
+int a;
+
 

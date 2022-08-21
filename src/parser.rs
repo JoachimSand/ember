@@ -18,81 +18,70 @@ impl fmt::Display for ParserError {
     }
 }
 
-type NodePtr = Box<Node>;
+pub type NodePtr = Box<Node>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BinaryNode {
     operator : Token,
     left : NodePtr,
     right : NodePtr,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UnaryNode {
     operator : Token,
     operand : NodePtr,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ArrayIndexNode {
     lvalue : NodePtr,
     index : NodePtr,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FunctionCallNode {
     function_name : NodePtr,
     arguments : NodePtr,
 }
 
-#[derive(Clone, Debug)]
-pub struct DeclarationNode {
-    declaration_specifiers : NodePtr,
-    init_declarator_list : NodePtr,
-}
-
-#[derive(Clone, Debug)]
-pub struct DeclaratorNode {
-    // TODO: Add pointer derived type
-    // int (*p[4]) (int x, int y); 
-    // "identifier p is an array of 4 of pointers to ..." Layer 1
-    // " ... a function taking two ints returning int" Layer 2
-
-    // What the declarator is "modifying". In most cases this would be an 
-    // identifier, but could also be another declarator node!
-    base : NodePtr,
-
-    // Pointer to postfix derived type node (either an array or function declarator)
-    // which specifies how this declarator node is modifying the base.
-    //
-    postfix_derived_type : NodePtr,
-}
-
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct InitDeclaratorNode {
     declarator : NodePtr,
     initializer : NodePtr,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum DerivedType {
+    Pointer,
+    Array { size : Option<i64> },
+    Function { parameter_list : NodePtr },
+    FunctionParameterless,
+}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeclaratorNode {
+    name : String,
+    derived_types : Vec<DerivedType>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Node {
     TranslationalUnit{external_declarations : Vec<NodePtr>},
     FunctionDefinition{ declaration_specifiers : NodePtr, declarator : NodePtr, compound_statement : NodePtr},
     CompoundStatement{ declaration_list : NodePtr, statement_list : NodePtr},
 
     DeclarationList(Vec<NodePtr>),
-    Declaration(DeclarationNode),
+    Declaration{ declaration_specifiers : NodePtr, init_declarator_list : NodePtr},
     DeclarationSpecifiers(Vec<NodePtr>),
+    Pointer(Vec<NodePtr>),
 
     StatementList(Vec<NodePtr>),
-    Goto{ identifier : Token},
+    Goto{ goto_id : String},
     Return{ expression : NodePtr},
 
+    Declarator(DeclaratorNode),
     InitDeclarator(InitDeclaratorNode),
-    ArrayDeclarator(DeclaratorNode),
-    FunctionDeclarator(DeclaratorNode),
 
     TypeQualifier(Token),
     TypeSpecifier(Token),
@@ -105,8 +94,8 @@ pub enum Node {
     FunctionCall(FunctionCallNode),
     ArrayIndex(ArrayIndexNode),
     
-    Terminal(Token),
- 
+    Identifier{ name: String },
+    Literal(Token),
     Empty,
 }
 
@@ -120,9 +109,30 @@ impl fmt::Display for Node {
             Node::StatementList(_) => write!(f, "Statement List"),
 
             Node::InitDeclarator(_) => write!(f, "Init Declarator"),
-            Node::FunctionDeclarator(_) => write!(f, "Func Declarator"),
-            
-            Node::Declaration(_) => write!(f, "Declaration"),
+            Node::Declarator(declarator) => {
+                write!(f, "Declarator {} ", declarator.name);
+
+                let mut iter = declarator.derived_types.iter().peekable();
+
+                while let Some(node) = iter.next() {
+                    match node {
+                        DerivedType::Pointer => { write!(f, "* "); }
+                        DerivedType::FunctionParameterless => { write!(f, "() "); }
+                        DerivedType::Array { size }=> { 
+                            if let Some(size) = size {
+                                write!(f, "[{}] ", size);
+                            } else {
+                                write!(f, "[] ");
+                            }
+                        }
+                        _ => { write!(f, "Unimplemented"); }
+                    }
+                    ()
+                }
+                writeln!(f, "")
+            } 
+
+            Node::Declaration{..} => write!(f, "Declaration"),
             Node::DeclarationSpecifiers(_) => write!(f, "Declaration Specifiers"),
             Node::TypeSpecifier(t) => write!(f, "{:?}", t),
             Node::TypeQualifier(t) => write!(f, "{:?}", t),
@@ -133,7 +143,8 @@ impl fmt::Display for Node {
             Node::Postfix(n) => write!(f, "Postfix {:?}", n.operator),
             Node::ArrayIndex(_) => write!(f, "Array Index"),
             Node::FunctionCall(_) => write!(f, "Function Call"),
-            Node::Terminal(t) => write!(f, "{:?}", t),
+            Node::Literal(t) => write!(f, "{:?}", t),
+            Node::Identifier{name} => write!(f, "{}", name),
 
             Node::Empty => write!(f, "Empty"),
 
@@ -149,11 +160,8 @@ struct OperatorInfo {
     left_associative : bool,
 }
 
-pub fn print_ast(start : NodePtr, prefix : String, is_last : bool) {
-
+fn print_declarator(declarator : DeclaratorNode, prefix : String, is_last : bool){
     print!("{}", prefix);
-
-
     let mut new_prefix : String = prefix;
     if is_last {
         print!("└──");
@@ -163,7 +171,21 @@ pub fn print_ast(start : NodePtr, prefix : String, is_last : bool) {
         new_prefix.push_str("│  ");
     }
 
-    println!("{}", start.deref());
+}
+
+pub fn print_ast(start : NodePtr, prefix : String, is_last : bool) {
+
+    print!("{}", prefix);
+    let mut new_prefix : String = prefix;
+    if is_last {
+        print!("└──");
+        new_prefix.push_str("    ");
+    } else {
+        print!("├──");
+        new_prefix.push_str("│  ");
+    }
+
+    println!("{}", *start);
     
     match *start {
         Node::FunctionDefinition{ declaration_specifiers, declarator, compound_statement} => {
@@ -190,7 +212,7 @@ pub fn print_ast(start : NodePtr, prefix : String, is_last : bool) {
             }
         }
 
-        Node::Empty | Node::Terminal(_) | Node::TypeSpecifier(_) => {
+        Node::Empty | Node::Identifier{..} | Node::Literal(_) | Node::TypeSpecifier(_) => {
             return;
         }
         Node::Infix(node) => {
@@ -207,19 +229,19 @@ pub fn print_ast(start : NodePtr, prefix : String, is_last : bool) {
             print_ast(node.lvalue, new_prefix.clone(), false);
             print_ast(node.index, new_prefix, true);
         }
-        Node::FunctionDeclarator(node) => {
-            print_ast(node.base, new_prefix.clone(), false);
-            print_ast(node.postfix_derived_type, new_prefix, true);
-        }
 
-        Node::Declaration(node) => {
-            print_ast(node.declaration_specifiers, new_prefix.clone(), false);
-            print_ast(node.init_declarator_list, new_prefix, true);
+        Node::Declaration{ declaration_specifiers, init_declarator_list} => {
+            print_ast(declaration_specifiers, new_prefix.clone(), false);
+            print_ast(init_declarator_list, new_prefix, true);
         }
 
         Node::InitDeclarator(node) => {
             print_ast(node.declarator, new_prefix.clone(), false);
             print_ast(node.initializer, new_prefix, true);
+        }
+
+        Node::Declarator(node) => {
+            
         }
         _ => {
             print!("Print AST node not implemented for {:?}", *start);
@@ -307,8 +329,13 @@ fn expect_token(lexer : &mut Peekable<Lexer>, expect : Token) -> Result<Token, P
 fn parse_primary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
     let cur_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
     match cur_token {
-        Token::Identifier(_) | Token::IntegerLiteral(_) | Token::FloatLiteral(_) | Token::DoubleLiteral(_) => {
-            return Ok(Box::new(Node::Terminal(cur_token)));
+        Token::Identifier(name) => {
+            let node = Node::Identifier{ name };
+            return Ok(NodePtr::new(node));
+        }
+
+        Token::IntegerLiteral(_) | Token::FloatLiteral(_) | Token::DoubleLiteral(_) => {
+            return Ok(NodePtr::new(Node::Literal(cur_token)));
         }
 
         Token::LParen => {
@@ -385,11 +412,13 @@ fn parse_unary(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError>{
     
     let peek_token = lexer.peek().ok_or(ParserError::EarlyLexerTermination)?; 
     match peek_token {
+        /*
         Token::IntegerLiteral(_) | Token::FloatLiteral(_) | Token::DoubleLiteral(_) => {
             let token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
-            let node = Node::Terminal(token);
+            let node = Node::Literal(token);
             return Ok(Box::new(node));
         }
+        */
 
         Token::Increment | Token::Decrement | Token::Ampersand | Token::Asterisk | 
         Token::Plus | Token::Minus | Token::Negation => {
@@ -552,6 +581,22 @@ fn parse_declaration_specifiers(lexer : &mut Peekable<Lexer>) -> Result<NodePtr,
     }
 }
 
+//pointer
+//	: '*'
+//	| '*' type_qualifier_list
+//	| '*' pointer
+//	| '*' type_qualifier_list pointer
+// TODO: Add suport for const/volatile
+/*
+fn parse_pointer(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+    let list = vec![expect_token(lexer, Token::Asterisk)?];
+
+    while let Token::Asterisk = lexer.peek().ok_or(ParserError::EarlyLexerTermination)? {
+        list.push(Token::Asterisk)
+    }
+
+    return Ok(NodePtr::new(Node::Pointer(list)));
+}*/
 
 // direct_declarator and declarator are tightly coupled as the name suggests
 // The only reason the two are split into two is to ensure that the derived
@@ -569,48 +614,69 @@ fn parse_declaration_specifiers(lexer : &mut Peekable<Lexer>) -> Result<NodePtr,
 // 	| direct_declarator '(' identifier_list ')'
 // 	| direct_declarator '(' ')'
 
+
 // declarator
 // 	: pointer direct_declarator
 // 	| direct_declarator
-fn parse_declarator(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
-    // TODO: implement pointer derived type
+fn parse_declarator_recursive(lexer : &mut Peekable<Lexer>, declarator : &mut DeclaratorNode) -> Result<(), ParserError> {
     
-    let base: NodePtr;
+    // parse pointer derived types but don't push them to list of derived types on the way down
+    // the declarator tree
+    let mut pointer_count = 0;
+    while let Token::Semicolon = lexer.peek().ok_or(ParserError::EarlyLexerTermination)? {
+        lexer.next();
+        pointer_count += 1;
+    }
+
     let cur_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
     match cur_token {
-        Token::Identifier(_) => {
-            base = NodePtr::new(Node::Terminal(cur_token)); 
+        Token::Identifier(name) => {
+            declarator.name = name;
         }
         Token::LParen => {
-            base = parse_declarator(lexer)?;
+            parse_declarator_recursive(lexer, declarator)?;
             expect_token(lexer, Token::RParen)?;
         }
         _ => return Err(ParserError::UnexpectedToken(cur_token)),
     }
 
+
     
     // Each "layer" of a declarator can only contain one derived type:
     // 1. [Base] is an array of ...
     // 2. [Base] is a function returning...
-    // The former of two can be repeated more than once in a declarator layer,
+    // The former of the two can be repeated more than once in a declarator layer,
     // the latter cannot.
     match lexer.peek().ok_or(ParserError::EarlyLexerTermination)? {
         Token::LParen => { // function declaration
             lexer.next();
-            let postfix_derived_type = NodePtr::new(Node::Empty);
 
             // TODO: Implement parameter_type_list and identifier_list
             expect_token(lexer, Token::RParen).map_err(|_| ParserError::NotImplemented)?;
+            declarator.derived_types.push(DerivedType::FunctionParameterless);
             
-            let declarator_node = Node::FunctionDeclarator(DeclaratorNode{ base, postfix_derived_type});
-            return Ok(NodePtr::new(declarator_node));
         }
         Token::LBracket => {
-            // TODO: Implement array declaration.
+            lexer.next();
+            // TODO: Implement constant size array declaration.
             return Err(ParserError::NotImplemented);
         }
-        _ => return Ok(base),
+        _ => return Ok(()),
     }
+
+    // ... finally push the pointer derived types which were parsed on the way down
+    for _ in 0..pointer_count {
+        declarator.derived_types.push(DerivedType::Pointer);
+    }
+
+    return Ok(());
+}
+
+fn parse_declarator(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserError> {
+    let mut declarator = DeclaratorNode{ name : String::new(), derived_types : Vec::<DerivedType>::new()};
+    parse_declarator_recursive(lexer, &mut declarator)?;
+
+    return Ok(NodePtr::new(Node::Declarator(declarator)));
 }
 
 
@@ -662,7 +728,7 @@ fn parse_declaration(lexer : &mut Peekable<Lexer>, consume_semicolon : bool) -> 
         expect_token(lexer, Token::Semicolon)?;
     }
 
-    return Ok(NodePtr::new(Node::Declaration(DeclarationNode{declaration_specifiers, init_declarator_list} ) ));
+    return Ok(NodePtr::new(Node::Declaration {declaration_specifiers, init_declarator_list} ));
 }
 
 //declaration_list
@@ -715,8 +781,8 @@ pub fn parse_statement(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, ParserEr
             // TODO: A lot of these .ok_or() could be a lot more succint with a function
             let possible_id_token = lexer.next().ok_or(ParserError::EarlyLexerTermination)?;
             match possible_id_token {
-                Token::Identifier(_) => {
-                    let node = Node::Goto{ identifier : possible_id_token };
+                Token::Identifier(name) => {
+                    let node = Node::Goto{ goto_id : name };
                     expect_token(lexer, Token::Semicolon)?;
                     return Ok(NodePtr::new(node));
                 }
@@ -859,22 +925,28 @@ fn parse_external_declaration(lexer : &mut Peekable<Lexer>) -> Result<NodePtr, P
             // Left curly bracket - this external declaration must a function_definition
             // we must now "extract" the declaration_specifiers and declarator from
             // the previously parsed declaration
-            let declaration_specifiers : NodePtr;
-            let declarator : NodePtr;
+            let func_declaration_specifiers : NodePtr;
+            let func_declarator : NodePtr;
 
-            if let Node::Declaration(node) = *declaration {
-                declaration_specifiers = node.declaration_specifiers;
+            if let Node::Declaration{ declaration_specifiers, init_declarator_list} = *declaration {
+                func_declaration_specifiers = declaration_specifiers;
 
-                if let Node::FunctionDeclarator(_) = *node.init_declarator_list {
-                    declarator = node.init_declarator_list;
+                if let Node::Declarator(DeclaratorNode{derived_types, ..}) = *init_declarator_list {
+                    let first_type = derived_types.first().ok_or(ParserError::UnableToDecomposeDeclaration)?;
+                    match first_type {
+                        DerivedType::Function{ .. } | DerivedType::FunctionParameterless => func_declarator = init_declarator_list,
+                        _ => return Err(ParserError::UnableToDecomposeDeclaration),
+                    }
+
                 } else {
                     return Err(ParserError::UnableToDecomposeDeclaration);
                 }
             } else {
                 return Err(ParserError::UnableToDecomposeDeclaration);
             }
+
             let compound_statement = parse_compound_statement(lexer)?;
-            let func_definition = Node::FunctionDefinition{ declaration_specifiers, declarator, compound_statement};
+            let func_definition = Node::FunctionDefinition{ declaration_specifiers : func_declaration_specifiers, declarator : func_declarator, compound_statement};
             return Ok(NodePtr::new(func_definition));
         }
 

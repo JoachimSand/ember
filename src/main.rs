@@ -4,6 +4,7 @@ use std::fs;
 
 mod lexer;
 mod parser;
+mod typechecker;
 
 use lexer::*;
 
@@ -22,9 +23,9 @@ fn main() {
                 Ok(_n) => {
                     let lexer = Lexer::new(&input);
 
-                    for cur_token in Lexer::new(&input) { 
-                        println!("{:?} ", cur_token);
-                    }
+                    //for cur_token in Lexer::new(&input) { 
+                    //    println!("{:?} ", cur_token);
+                    //}
 
                     match parser::parse_translational_unit(&mut lexer.peekable()) {
                         Ok(node) => {
