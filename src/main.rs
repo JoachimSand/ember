@@ -5,8 +5,11 @@ use std::fs;
 mod lexer;
 mod parser;
 mod typechecker;
+mod arena;
 
 use lexer::*;
+
+use crate::typechecker::type_check_start;
 
 fn main() {
     let args : Vec<String> = env::args().collect();
@@ -26,15 +29,21 @@ fn main() {
                     //for cur_token in Lexer::new(&input) { 
                     //    println!("{:?} ", cur_token);
                     //}
-
-                    match parser::parse_translational_unit(&mut lexer.peekable()) {
+                    let parser_result = parser::parse_translational_unit(&mut lexer.peekable());
+                    match parser_result {
                         Ok(node) => {
                             println!("Parsed translation_unit.");
                             println!("{:?}", node);
-                            parser::print_ast(node, String::new(), true);
+                            parser::print_ast(node.clone(), String::new(), true);
+
+                            match typechecker::type_check_start(&mut typechecker::Scopes::new(), node) {
+                                Ok(_) => (),
+                                Err(e) => println!("Error {e:?}"),
+                            }
                         }
                         Err(e) => println!("Error {e:?}"),
                     }
+                    
                 },
                 Err(e) => println!("Error: {e}"),
             };
