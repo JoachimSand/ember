@@ -25,15 +25,15 @@ fn main() {
             
             match stdin.read_line(input) {
                 Ok(_n) => {
-                    let lexer = &mut Lexer::new(&input).peekable();
                     let arena = &mut arena::Arena::new(20000);
+                    let lexer = &mut Lexer::new(&input, &arena).peekable();
                     //for cur_token in Lexer::new(&input) { 
                     //    println!("{:?} ", cur_token);
                     //}
 
-                    let parser_result = parser::parse_primary(lexer, arena);
+                    let parser_result = parser::parse_translational_unit(lexer, arena);
                     match parser_result {
-                        Ok(_) => (),
+                        Ok(n) => (parser::print_ast(n, "".to_string(), true)),
                         Err(e) => {
                             println!("Error {e:?}");
                             return;
@@ -71,12 +71,13 @@ fn main() {
         match fs::read_to_string(filename) {
             Ok(contents) => {
 
+                /*
                 for cur_token in Lexer::new(&contents) { 
                     println!("{:?} ", cur_token);
                 }
                 
                 let lexer = Lexer::new(&contents);
-                
+                */
                 /*
                 match parser::parse_translational_unit(&mut lexer.peekable()) {
                     Ok(node) => {

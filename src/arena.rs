@@ -3,6 +3,7 @@ use std::{fmt, error::*};
 use std::cell::UnsafeCell;
 use std::ptr;
 use std::slice;
+use std::str;
 
 fn align_up(addr: usize, alignment: usize) -> usize {
     let remainder = addr % alignment;
@@ -33,10 +34,6 @@ pub struct Arena {
     end : UnsafeCell<usize>,
 }
 
-// trait to identify types allowed on the parsers memory arena
-pub trait ArenaSupported {}
-
-
 impl<'arena> Arena {
     pub fn new(capacity : usize) -> Arena {
         
@@ -53,9 +50,13 @@ impl<'arena> Arena {
         }
     }
 
+    pub fn push_str(self : &'arena Arena, input : &str) -> Result<&'arena str, ArenaError> {
+        let byte_vec = self.push_slice_copy(input.as_bytes())?;
+        unsafe { return Ok(str::from_utf8_unchecked(byte_vec)) };
+    }
 
-    pub fn push_slice_clone<T>(self : &'arena Arena, slice : &[T]) -> Result<&'arena [T], ArenaError>
-    where T : Copy 
+
+    pub fn push_slice_copy<T : Copy>(self : &'arena Arena, slice : &[T]) -> Result<&'arena [T], ArenaError>
     {
         let layout = Layout::for_value(slice);
         let dst = self.alloc_layout(layout)?;
@@ -68,7 +69,6 @@ impl<'arena> Arena {
     }
 
     pub fn push<T>(self : &'arena Arena, entry : T) -> Result<&'arena T, ArenaError>
-    where T : ArenaSupported
     {
         let layout = Layout::for_value(&entry);
         let dst = self.alloc_layout(layout)?;
