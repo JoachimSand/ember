@@ -2,32 +2,7 @@ use std::fmt::Formatter;
 use std::{iter::Peekable, fmt, error::Error};
 use crate::lexer::*;
 use crate::arena::*;
-
-#[derive(Debug)]
-pub enum ParserError<'e> {
-    NotImplemented,
-    UnexpectedToken(Token<'e>),
-    EarlyLexerTermination,
-    UnknownPrecedence(Token<'e>),
-    UnableToDecomposeDeclaration,
-    InvalidConstExpression,
-    AllocationError,
-}
-
-impl <'e> Error for ParserError<'e> {}
-
-impl <'e> fmt::Display for ParserError<'e> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "Parser Error: {}", self.to_string())
-    }
-}
-
-// ? operator will automatically call this for conversion.
-impl<'e> From<ArenaError> for ParserError<'e> {
-    fn from(_e: ArenaError) -> Self {
-        return ParserError::AllocationError;
-    }
-}
+use crate::compile::CompilationError;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UnaryNode<'n> {
@@ -232,14 +207,14 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
 }
 
 // wrapper functions for easy conversion to parser errors
-fn next_token<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<Token<'t>, ParserError<'t>> 
+fn next_token<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<Token<'t>, CompilationError<'t>> 
 {
-    lexer.next().ok_or(ParserError::EarlyLexerTermination)
+    lexer.next().ok_or(CompilationError::EarlyLexerTermination)
 }
 
-fn peek_token<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<&'l Token<'t>, ParserError<'t>> 
+fn peek_token<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<&'l Token<'t>, CompilationError<'t>> 
 {
-    lexer.peek().ok_or(ParserError::EarlyLexerTermination)
+    lexer.peek().ok_or(CompilationError::EarlyLexerTermination)
 }
 
 struct OperatorInfo {
@@ -248,7 +223,7 @@ struct OperatorInfo {
 }
 // Lookup table for binary operators
 // https://en.cppreference.com/w/c/language/operator_precedence
-fn operator_lookup<'t>(token : &'t Token) -> Result<OperatorInfo, ParserError<'t>> {
+fn operator_lookup<'t>(token : &'t Token) -> Result<OperatorInfo, CompilationError<'t>> {
     match token {
         Token::Asterisk | Token::Div | Token::Mod => {
             return Result::Ok(OperatorInfo{precedence : 200, left_associative : true});
@@ -299,18 +274,18 @@ fn operator_lookup<'t>(token : &'t Token) -> Result<OperatorInfo, ParserError<'t
             return Result::Ok(OperatorInfo{precedence : 90, left_associative : false});
         }
 
-        _ => return Result::Err(ParserError::UnknownPrecedence(token.clone())),
+        _ => return Result::Err(CompilationError::UnknownPrecedence(token.clone())),
     }
 }
 
-fn expect_token<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>, expect : Token) -> Result<Token<'t>, ParserError<'t>> 
+fn expect_token<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>, expect : Token) -> Result<Token<'t>, CompilationError<'t>> 
 {
     let cur_token = next_token(lexer)?;
 
     if std::mem::discriminant(&cur_token) == std::mem::discriminant(&expect) {
         return Ok(cur_token);
     } else {
-        return Err(ParserError::UnexpectedToken(cur_token));
+        return Err(CompilationError::UnexpectedToken(cur_token));
     }
 }
 
@@ -321,7 +296,7 @@ fn expect_token<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>, expect : Token
 // 	| '(' expression ')'
 // 	;
 //
-pub fn parse_primary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>> 
+pub fn parse_primary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> 
 {
     let cur_token : Token = next_token(lexer)?;
     match cur_token {
@@ -342,7 +317,7 @@ pub fn parse_primary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'are
         }
 
         //TODO: String literal
-        _ => return Err(ParserError::UnexpectedToken(cur_token)),
+        _ => return Err(CompilationError::UnexpectedToken(cur_token)),
     }  
 }
 
@@ -355,7 +330,7 @@ pub fn parse_primary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'are
 // 	| postfix_expression PTR_OP IDENTIFIER
 // 	| postfix_expression INC_OP
 // 	| postfix_expression DEC_OP
-fn parse_postfix<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>>
+fn parse_postfix<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>>
 {
     // The common left-recursion issue can be circumvented by realizing that
     // a postfix expression must begin with a primary expression
@@ -406,13 +381,13 @@ fn parse_postfix<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena A
 // 	| SIZEOF unary_expression
 // 	| SIZEOF '(' type_name ')'
 
-fn parse_unary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>>
+fn parse_unary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>>
 {
     let peek_token = peek_token(lexer)?;
     match peek_token {
         /*
         Token::IntegerLiteral(_) | Token::FloatLiteral(_) | Token::DoubleLiteral(_) => {
-            let token = next_token(lexer).ok_or(ParserError::EarlyLexerTermination)?;
+            let token = next_token(lexer).ok_or(CompilationError::EarlyLexerTermination)?;
             let node = Node::Literal(token);
             return Ok(Box::new(node));
         }
@@ -431,7 +406,7 @@ fn parse_unary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Are
                     operand,
                 });
             
-            return Ok(arena.push(node)?);
+            return arena.push(node);
         }
 
         Token::Sizeof => {
@@ -440,7 +415,7 @@ fn parse_unary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Are
             let cur_token = next_token(lexer)?;
             if cur_token == Token::LParen {
                 // Sizeof on type
-                return Err(ParserError::NotImplemented);
+                return Err(CompilationError::NotImplemented);
                 /*
                 let type_token = parse_type(lexer)?;
                 expect_token(lexer, Token::RParen);
@@ -465,7 +440,7 @@ fn parse_unary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Are
                         operand,
                     });
                 
-                return Ok(arena.push(node)?);
+                return arena.push(node);
             }
         }
 
@@ -475,7 +450,7 @@ fn parse_unary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Are
     }
 }
 
-fn parse_expr<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena, min_precedence : u8) -> Result<&'arena Node<'arena>, ParserError<'arena>>
+fn parse_expr<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena, min_precedence : u8) -> Result<&'arena Node<'arena>, CompilationError<'arena>>
 {
     // Find next atom
     let mut expr : &Node = parse_unary(lexer, arena)?;
@@ -510,13 +485,13 @@ fn parse_expr<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Aren
 }
 
 
-fn eval_const_expression<'e>(node : &Node) -> Result<i64, ParserError<'e>> {
+fn eval_const_expression<'e>(node : &Node) -> Result<i64, CompilationError<'e>> {
     match &*node {
         Node::Literal(token) => {
             if let Token::IntegerLiteral(num) = *token {
                 return Ok(num);
             } else {
-                return Err(ParserError::InvalidConstExpression);
+                return Err(CompilationError::InvalidConstExpression);
             }
         }
 
@@ -525,18 +500,18 @@ fn eval_const_expression<'e>(node : &Node) -> Result<i64, ParserError<'e>> {
                 Token::Plus => return Ok( eval_const_expression(left)? + eval_const_expression(right)?),
                 Token::Minus => return Ok( eval_const_expression(left)? - eval_const_expression(right)?),
 
-                _ => return Err(ParserError::InvalidConstExpression),
+                _ => return Err(CompilationError::InvalidConstExpression),
             }
 
         }
 
-        _ => return Err(ParserError::InvalidConstExpression), 
+        _ => return Err(CompilationError::InvalidConstExpression), 
     }
 
 }
 
 
-fn parse_type_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<Token<'t>, ParserError<'t>> {
+fn parse_type_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<Token<'t>, CompilationError<'t>> {
     let cur_token = peek_token(lexer)?;
     match cur_token {
         Token::Float | Token::Int | Token::Double => {
@@ -545,12 +520,12 @@ fn parse_type_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Res
         }
         _ => {
             // Handle user defined types
-            return Err(ParserError::NotImplemented);
+            return Err(CompilationError::NotImplemented);
         }
     }
 }
 
-fn parse_declaration_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<Token<'t>, ParserError<'t>> {
+fn parse_declaration_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<Token<'t>, CompilationError<'t>> {
     let cur_token = peek_token(lexer)?;
     match cur_token {
         // Token::Typedef | Token::Extern | Token::Static | Token::Auto | Token::Register
@@ -574,7 +549,7 @@ fn parse_declaration_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>)
 // 	| type_qualifier declaration_specifiers
 // 	;
 // TODO: Storage Class specifiers ignored for now
-fn parse_declaration_specifiers<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena DeclarationSpecifiersNode<'arena>, ParserError<'arena>> {
+fn parse_declaration_specifiers<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena DeclarationSpecifiersNode<'arena>, CompilationError<'arena>> {
     // We require at least one declaration specifier
     let specifier = parse_declaration_specifier(lexer)?;
     
@@ -598,16 +573,6 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Peekable<Lexer<'arena>>, ar
 //	| '*' pointer
 //	| '*' type_qualifier_list pointer
 // TODO: Add suport for const/volatile
-/*
-fn parse_pointer<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer>) -> Result<&'t Node<'t>, ParserError<'t>> {
-    let list = vec![expect_token(lexer, Token::Asterisk)?];
-
-    while let Token::Asterisk = peek_token(lexer)? {
-        list.push(Token::Asterisk)
-    }
-    
-    return Ok(NodePtr::new(Node::Pointer(list)));
-}*/
 
 // direct_declarator and declarator are tightly coupled as the name suggests
 // The only reason the two are split into two is to ensure that the derived
@@ -629,13 +594,13 @@ fn parse_pointer<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer>) -> Result<&'t Nod
 // declarator
 // 	: pointer direct_declarator
 // 	| direct_declarator
-fn parse_declarator_recursive<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena, derived_types : &mut Vec<DerivedType>, name : &mut&'arena str) -> Result<(), ParserError<'arena>> {
+fn parse_declarator_recursive<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena, derived_types : &mut Vec<DerivedType>, name : &mut&'arena str) -> Result<(), CompilationError<'arena>> {
     
     // parse pointer derived types but don't push them to list of derived types on the way down
     // the declarator tree
     let mut pointer_count = 0;
     while let Token::Asterisk = peek_token(lexer)? {
-        next_token(lexer);
+        next_token(lexer)?;
         pointer_count += 1;
     }
 
@@ -648,7 +613,7 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
             parse_declarator_recursive(lexer, arena, derived_types, name)?;
             expect_token(lexer, Token::RParen)?;
         }
-        _ => return Err(ParserError::UnexpectedToken(cur_token)),
+        _ => return Err(CompilationError::UnexpectedToken(cur_token)),
     }
 
     // Each "layer" of a declarator can only contain one derived type:
@@ -663,7 +628,7 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
                 next_token(lexer);
 
                 // TODO: Implement parameter_type_list and identifier_list
-                expect_token(lexer, Token::RParen).map_err(|_| ParserError::NotImplemented)?;
+                expect_token(lexer, Token::RParen).map_err(|_| CompilationError::NotImplemented)?;
                 derived_types.push(DerivedType::FunctionParameterless);
                 
             }
@@ -691,7 +656,7 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
     return Ok(());
 }
 
-fn parse_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena DeclaratorNode<'arena>, ParserError<'arena>> {
+fn parse_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena DeclaratorNode<'arena>, CompilationError<'arena>> {
     let mut name = "";
     let mut derived_types_list : Vec<DerivedType> = Vec::new();
 
@@ -708,13 +673,13 @@ fn parse_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'aren
 //	| '{' initializer_list '}'
 //	| '{' initializer_list ',' '}'
 //	;
-fn parse_initializer<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>> {
+fn parse_initializer<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     match peek_token(lexer)? {
         Token::LCurlyBracket => {
             next_token(lexer);
             // TODO: Implement initializer_list
 
-            return Err(ParserError::NotImplemented);
+            return Err(CompilationError::NotImplemented);
         }
 
         _ => return parse_expr(lexer, arena, 0),
@@ -725,7 +690,7 @@ fn parse_initializer<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'are
 //	: declarator
 //	| declarator '=' initializer
 //	;
-fn parse_init_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>> {
+fn parse_init_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     let declarator = parse_declarator(lexer, arena)?;
     match peek_token(lexer)? {
         Token::Assign => {
@@ -746,7 +711,7 @@ fn parse_init_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &
 //init_declarator_list
 //	: init_declarator
 //	| init_declarator_list ',' init_declarator
-fn parse_init_declarator_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>> {
+fn parse_init_declarator_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     // TODO: Implement init_declarator_list
     return parse_init_declarator(lexer, arena);
 }
@@ -756,7 +721,7 @@ fn parse_init_declarator_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
 // 	| declaration_specifiers init_declarator_list ';'
 // 	;
 // e.g. void; int a = 3;
-pub fn parse_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena, consume_semicolon : bool) -> Result<&'arena Node<'arena>, ParserError<'arena>> {
+pub fn parse_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena, consume_semicolon : bool) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     let declaration_specifiers = parse_declaration_specifiers(lexer, arena)?;
     let init_declarator_list : &Node;
 
@@ -780,7 +745,7 @@ pub fn parse_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &
 //	: declaration
 //	| declaration_list declaration
 //	;
-fn parse_declaration_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>> {
+fn parse_declaration_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     let declaration = parse_declaration(lexer, arena, true)?;
     let mut list = vec![declaration]; 
 
@@ -807,7 +772,7 @@ fn parse_declaration_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : 
 //	| iteration_statement
 //	| jump_statement
 //	;
-pub fn parse_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>> {
+pub fn parse_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     let peek_token = peek_token(lexer)?;
 
     match peek_token {
@@ -820,14 +785,14 @@ pub fn parse_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'a
         //    | RETURN expression ';'
 
         Token::Continue | Token::Break => {
-            return Err(ParserError::NotImplemented);
+            return Err(CompilationError::NotImplemented);
             //let node = Node::Terminal(*peek_token);
             //expect_token(lexer, Token::Semicolon);
             //return Ok(NodePtr::new(node));
         }
 
         Token::Goto => {
-            next_token(lexer);
+            next_token(lexer)?;
             // TODO: A lot of these .ok_or() could be a lot more succint with a function
             let possible_id_token = next_token(lexer)?;
             match possible_id_token {
@@ -836,12 +801,12 @@ pub fn parse_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'a
                     expect_token(lexer, Token::Semicolon)?;
                     return Ok(arena.push(node)?);
                 }
-                _ => return Err(ParserError::UnexpectedToken(possible_id_token)),
+                _ => return Err(CompilationError::UnexpectedToken(possible_id_token)),
             }
         }
 
         Token::Return => {
-            next_token(lexer);
+            next_token(lexer)?;
             let cur_token = next_token(lexer)?;
 
             match cur_token {
@@ -852,7 +817,7 @@ pub fn parse_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'a
 
                 _ => {
                     let err_token = cur_token.clone();
-                    let expression = parse_expr(lexer, arena, 0).map_err(|_| ParserError::UnexpectedToken(err_token))?;
+                    let expression = parse_expr(lexer, arena, 0).map_err(|_| CompilationError::UnexpectedToken(err_token))?;
                     let node = Node::Return { expression };
 
                     return Ok(arena.push(node)?);
@@ -881,7 +846,7 @@ pub fn parse_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'a
 }
 
 
-fn parse_statement_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>> {
+fn parse_statement_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     let statement = parse_statement(lexer, arena)?;
     let mut list = vec![statement]; 
 
@@ -905,7 +870,7 @@ fn parse_statement_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'
 //	| '{' declaration_list '}'
 //	| '{' declaration_list statement_list '}'
 //	;
-fn parse_compound_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>> {
+fn parse_compound_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     expect_token(lexer, Token::LCurlyBracket)?;
    
     let mut declarations = Vec::<&Node>::new(); 
@@ -965,7 +930,7 @@ we have a declaration and convert it to a function definition if necessary.
 // 	: function_definition
 // 	| declaration
 // 	;
-fn parse_external_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>> {
+fn parse_external_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     let declaration = parse_declaration(lexer, arena, false)?;    
    
     let peek_token = peek_token(lexer)?; 
@@ -987,28 +952,28 @@ fn parse_external_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
                 func_declaration_specifiers = declaration_specifiers;
 
                 if let Node::InitDeclarator{ declarator, initializer } = *init_declarator_list {
-                    let first_type = declarator.derived_types.last().ok_or(ParserError::UnableToDecomposeDeclaration)?;
+                    let first_type = declarator.derived_types.last().ok_or(CompilationError::UnableToDecomposeDeclaration)?;
                     match first_type {
                         DerivedType::Function{ .. } | DerivedType::FunctionParameterless => func_declarator = declarator,
-                        _ => return Err(ParserError::UnableToDecomposeDeclaration),
+                        _ => return Err(CompilationError::UnableToDecomposeDeclaration),
                     }
                 } else {
 
-                    return Err(ParserError::UnableToDecomposeDeclaration);
+                    return Err(CompilationError::UnableToDecomposeDeclaration);
                 }
                 /*
                 if let Node::Declarator(DeclaratorNode{ref derived_types, ..}) = *init_declarator_list {
-                    let first_type = derived_types.last().ok_or(ParserError::UnableToDecomposeDeclaration)?;
+                    let first_type = derived_types.last().ok_or(CompilationError::UnableToDecomposeDeclaration)?;
                     match first_type {
                         DerivedType::Function{ .. } | DerivedType::FunctionParameterless => func_declarator = init_declarator_list,
-                        _ => return Err(ParserError::UnableToDecomposeDeclaration),
+                        _ => return Err(CompilationError::UnableToDecomposeDeclaration),
                     }
 
                 } else {
-                    return Err(ParserError::UnableToDecomposeDeclaration);
+                    return Err(CompilationError::UnableToDecomposeDeclaration);
                 }*/
             } else {
-                return Err(ParserError::UnableToDecomposeDeclaration);
+                return Err(CompilationError::UnableToDecomposeDeclaration);
             }
 
             let compound_statement = parse_compound_statement(lexer, arena)?;
@@ -1017,7 +982,7 @@ fn parse_external_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
         }
 
         _ => {
-            return Err(ParserError::UnexpectedToken(peek_token.clone()));
+            return Err(CompilationError::UnexpectedToken(peek_token.clone()));
         }
     }
 }
@@ -1026,7 +991,7 @@ fn parse_external_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
 //	: external_declaration
 //	| translation_unit external_declaration
 //	;
-pub fn parse_translational_unit<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, ParserError<'arena>> {
+pub fn parse_translational_unit<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
 
     // a translation_unit must have at least one external_declaration according to the grammar
     let first_declaration = parse_external_declaration(lexer, arena)?;

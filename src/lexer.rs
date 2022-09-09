@@ -1,9 +1,11 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Token {
-    Identifier(String),
+use crate::arena::*;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Token<'t> {
+    Identifier(&'t str),
 
     IntegerLiteral(i64),
     FloatLiteral(f32),
@@ -130,14 +132,18 @@ macro_rules! lex_operand {
 
 pub struct Lexer<'input> {
     char_stream : Peekable<Chars<'input>>,
+    arena : &'input Arena
 }
 
 impl <'input> Lexer<'input> {
-    pub fn new(contents : &'input str) -> Self {
-        Lexer { char_stream : contents.chars().peekable() }
+    pub fn new(contents : &'input str, arena : &'input Arena) -> Self {
+        Lexer { 
+            char_stream : contents.chars().peekable(), 
+            arena
+        }
     }
 
-    fn advance_tokens(&mut self) -> Option<Token> {    
+    fn advance_tokens(&mut self) -> Option<Token<'input>> {    
         let mut first_char : char;
         
         loop {
@@ -174,7 +180,10 @@ impl <'input> Lexer<'input> {
                 
                 if identifier_string.chars().count() >= 10 {
                     // No keyword is 10 characters or longer
-                    return Some(Token::Identifier(identifier_string.to_string()));
+
+                    // TODO: Remove this unwrap when capability of mem arena has been improved
+                    let identifier = self.arena.push_str(identifier_string.as_str()).unwrap();
+                    return Some(Token::Identifier(identifier));
                 }
 
                 match identifier_string.as_str() {
@@ -211,9 +220,11 @@ impl <'input> Lexer<'input> {
                     "volatile" => return Some(Token::Volatile),
                     "while" => return Some(Token::While),
 
-                    _ => return Some(Token::Identifier(identifier_string.to_string())),
+                    _ => {
+                        let identifier = self.arena.push_str(identifier_string.as_str()).unwrap();
+                        return Some(Token::Identifier(identifier));
+                    }
                 }
-
             }
 
             '0'..='9' => { 
@@ -405,9 +416,9 @@ impl <'input> Lexer<'input> {
 
 impl <'input> Iterator for Lexer <'input> { 
    
-    type Item = Token; 
+    type Item = Token<'input>; 
 
-    fn next(&mut self) -> Option<Token> {    
+    fn next(&mut self) -> Option<Self::Item> {    
 
         let token = self.advance_tokens();
         println!("{:?}", token);

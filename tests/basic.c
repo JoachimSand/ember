@@ -1,11 +1,9 @@
-int main() {
-    int a;
-    a = 5+5;
-    {
-        float b = 12.0;
-    }
-}
 
-int a;
+int a = 1;
+
+int main() {
+    int a = 2;
+    int *b = &a;
+}
 
 
