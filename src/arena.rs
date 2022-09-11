@@ -3,6 +3,7 @@ use std::cell::UnsafeCell;
 use std::ptr;
 use std::slice;
 use std::str;
+use std::fmt::Debug;
 
 use crate::compile::CompilationError;
 
@@ -43,14 +44,15 @@ impl<'arena> Arena {
     }
 
 
-    pub fn push_slice_copy<T : Copy>(self : &'arena Arena, slice : &[T]) -> Result<&'arena [T], CompilationError>
+    pub fn push_slice_copy<T : Copy + Debug>(self : &'arena Arena, slice : &[T]) -> Result<&'arena [T], CompilationError>
     {
         let layout = Layout::for_value(slice);
-        let dst = self.alloc_layout(layout)?;
-        
+        //println!("Allocating slice {:?}, space required: {}", slice, layout.size());
+        let dst = self.alloc_layout(layout)? as *mut T;
+
         unsafe {
-            ptr::copy_nonoverlapping(slice.as_ptr(), dst as *mut T, slice.len());
-            Ok(slice::from_raw_parts_mut(dst as *mut T, slice.len()))
+            ptr::copy_nonoverlapping(slice.as_ptr(), dst, slice.len());
+            Ok(slice::from_raw_parts_mut(dst, slice.len()))
         }
 
     }

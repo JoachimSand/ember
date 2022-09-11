@@ -8,6 +8,7 @@ mod parser;
 mod typechecker;
 mod arena;
 mod compile;
+mod codegen;
 
 use compile::*;
 

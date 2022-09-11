@@ -1,9 +1,9 @@
 use std::{iter::Peekable, fmt, error::Error};
-
 use crate::lexer::*;
 use crate::parser::*;
 use crate::arena::*;
 use crate::typechecker::*;
+use crate::codegen::*;
 
 // Global Error type for the whole compiler.
 #[derive(Debug)]
@@ -12,6 +12,7 @@ pub enum CompilationError<'e> {
     InsufficientSpace,
 
     // Parser Errors
+    UnimplVerbose(String),
     NotImplemented,
     UnexpectedToken(Token<'e>),
     EarlyLexerTermination,
@@ -20,15 +21,16 @@ pub enum CompilationError<'e> {
     InvalidConstExpression,
 
     // Type Check Errors
-    RedefOfVariable,
-    InvalidTreeStructure,
+    Redefinition(&'e str),
+    InvalidASTStructure,
+    NoScopes,
 }
 
 impl <'e> Error for CompilationError<'e> {}
 
 impl <'e> fmt::Display for CompilationError<'e> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "Compilation Error Error: {}", self.to_string())
+        write!(f, "Compilation Error: {:?}", self)
     }
 }
 
@@ -45,6 +47,7 @@ fn compile<'i : 'a, 'a>(input : &'i str, arena : &'a Arena) -> Result<(), Compil
 
     let translation_unit = parse_translational_unit(lexer, arena)?;
     print_ast(translation_unit, "".to_string(), true);
-    type_check_start(translation_unit)?;
+    //type_check_start(translation_unit)?;
+    codegen_start(translation_unit)?;
     Ok(())
 }
