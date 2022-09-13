@@ -135,6 +135,18 @@ pub struct Lexer<'input> {
     arena : &'input Arena
 }
 
+impl <'input> Iterator for Lexer <'input> { 
+   
+    type Item = Token<'input>; 
+
+    fn next(&mut self) -> Option<Self::Item> {    
+
+        let token = self.advance_tokens();
+        //println!("{:?}", token);
+        return token;
+    }
+}
+
 impl <'input> Lexer<'input> {
     pub fn new(contents : &'input str, arena : &'input Arena) -> Self {
         Lexer { 
@@ -414,14 +426,3 @@ impl <'input> Lexer<'input> {
     }
 }
 
-impl <'input> Iterator for Lexer <'input> { 
-   
-    type Item = Token<'input>; 
-
-    fn next(&mut self) -> Option<Self::Item> {    
-
-        let token = self.advance_tokens();
-        println!("{:?}", token);
-        return token;
-    }
-}

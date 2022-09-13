@@ -514,7 +514,7 @@ fn eval_const_expression<'e>(node : &Node) -> Result<i64, CompilationError<'e>> 
 fn parse_type_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<Token<'t>, CompilationError<'t>> {
     let cur_token = peek_token(lexer)?;
     match cur_token {
-        Token::Float | Token::Int | Token::Double => {
+        Token::Char | Token::Int | Token::Float | Token::Double => {
             let cur_token = next_token(lexer);
             return Ok(cur_token?);
         }
@@ -661,7 +661,7 @@ fn parse_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'aren
     let mut derived_types_list : Vec<DerivedType> = Vec::new();
 
     parse_declarator_recursive(lexer, arena, &mut derived_types_list, &mut name)?;
-    println!("Declarator {:?}, {:?}", name, derived_types_list);
+    //println!("Declarator {:?}, {:?}", name, derived_types_list);
 
     let derived_types = arena.push_slice_copy(&derived_types_list[..])?;
     let declarator = arena.push(DeclaratorNode{name, derived_types})?;
@@ -837,7 +837,7 @@ pub fn parse_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'a
         }
 
         _ => {
-            // No applicable keywords encountered, try 
+            // No applicable keywords encountered, try parsing expression
             let expression = parse_expr(lexer, arena, 0)?;
             expect_token(lexer, Token::Semicolon)?;
             return Ok(expression);
@@ -883,7 +883,7 @@ fn parse_compound_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena 
         }
     }
 
-    println!("Parsed declaration_list");
+    //println!("Parsed declaration_list");
 
     let mut statements = Vec::<&Node>::new(); 
     loop {

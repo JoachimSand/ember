@@ -34,6 +34,18 @@ impl <'e> fmt::Display for CompilationError<'e> {
     }
 }
 
+// Don't compile - only parse the input
+// and produce a legible AST.
+pub fn parse_only(input : &str){
+    let arena = &mut Arena::new(20000);
+
+    let lexer = &mut Lexer::new(&input, &arena).peekable();
+    match parse_translational_unit(lexer, arena) {
+        Ok(node) => print_ast(node, "".to_string(), true),
+        Err(e) => println!("{e}"),
+    }
+}
+
 pub fn compile_start(input : &str){
     let arena = &mut Arena::new(20000);
     match compile(input, &arena) {
