@@ -2,8 +2,9 @@
 int a = 1;
 
 int main() {
-    int a = 2;
-    int *b = &a;
+    int test = 2;
+    int test = 3;
+    int *test_2 = &a;
 }
 
 

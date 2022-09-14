@@ -30,6 +30,12 @@ pub struct DeclaratorNode<'n> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct InitDeclaratorNode<'n> {
+    pub declarator : &'n DeclaratorNode<'n>, 
+    pub initializer : &'n Node<'n>
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Node<'n> {
     TranslationalUnit{external_declarations : &'n [&'n Node<'n>]},
     FunctionDefinition{ declaration_specifiers : &'n DeclarationSpecifiersNode<'n>, declarator : &'n DeclaratorNode<'n>, compound_statement : &'n Node<'n>},
@@ -39,7 +45,8 @@ pub enum Node<'n> {
     StatementList(&'n [&'n Node<'n>]),
 
     Declaration{ declaration_specifiers : &'n DeclarationSpecifiersNode<'n>, init_declarator_list : &'n Node<'n>},
-    InitDeclarator{ declarator : &'n DeclaratorNode<'n>, initializer : &'n Node<'n>},
+    InitDeclarator(&'n InitDeclaratorNode<'n>),
+    InitDeclaratorList(&'n [&'n InitDeclaratorNode<'n>]),
     
     FunctionCall{ function_name : &'n Node<'n>, arguments : &'n Node<'n>},
     ArrayIndex{ lvalue : &'n Node<'n>, index : &'n Node<'n>},
@@ -68,7 +75,11 @@ impl<'n> fmt::Display for DeclarationSpecifiersNode<'n> {
 impl<'n> fmt::Display for DeclaratorNode<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
         
-        write!(f, "Declarator {}, ", self.name)?;
+        write!(f, "Declarator {}", self.name)?;
+
+        if self.derived_types.len() > 0 {
+            write!(f, ", ")?;
+        }
 
         let mut iter = self.derived_types.iter().peekable();
 
@@ -94,14 +105,14 @@ impl<'n> fmt::Display for DeclaratorNode<'n> {
 impl<'n> fmt::Display for Node<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            
             Node::TranslationalUnit{..} => write!(f, "Translational Unit"),
             Node::FunctionDefinition{..} => write!(f, "Function Definition"),
             Node::CompoundStatement{..} => write!(f, "Compound Statement"),
             Node::DeclarationList(_) => write!(f, "Declaration List"),
             Node::StatementList(_) => write!(f, "Statement List"),
         
-            Node::InitDeclarator{..} => write!(f, "Init Declarator"),
+            Node::InitDeclaratorList(_) => write!(f, "Init Declarator List"),
+            Node::InitDeclarator(_) => write!(f, "Init Declarator"),
             Node::Declaration{..} => write!(f, "Declaration"),
             /*
             Node::ArrayIndex(_) => write!(f, "Array Index"),
@@ -157,15 +168,44 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
 
         // quite possibly the coolest Rust syntax I have encountered so far
         Node::DeclarationList(list) | Node::StatementList(list) | Node::TranslationalUnit { external_declarations: list @ _ }=> {
+            if list.len() == 0 {
+                print_ast_prefix(new_prefix.clone(), true);
+                println!("Empty");
+                return;
+            }
+
+
             let mut iter = list.iter().peekable();
 
             while let Some(node) = iter.next() {
                 if iter.peek().is_some() {
-                    print_ast(node.clone(), new_prefix.clone(), false);
+                    print_ast(node, new_prefix.clone(), false);
                 } else {
-                    print_ast(node.clone(), new_prefix.clone(), true);
+                    print_ast(node, new_prefix.clone(), true);
                 }
             }
+
+        }
+
+        Node::InitDeclaratorList(list) => {
+            let mut iter = list.iter().peekable();
+
+            while let Some(node) = iter.next() {
+                if iter.peek().is_some() {
+                    let node = Node::InitDeclarator(node);
+                    print_ast(&node, new_prefix.clone(), false);
+                } else {
+                    let node = Node::InitDeclarator(node);
+                    print_ast(&node, new_prefix.clone(), true);
+                }
+            }
+        }
+
+        Node::InitDeclarator(node) => {
+            print_ast_prefix(new_prefix.clone(), false);
+            println!("{}", node.declarator);
+            print_ast_prefix(new_prefix.clone(), true);
+            println!("{}", node.initializer);
         }
 
         Node::Empty | Node::Identifier{..} | Node::Literal(_) | Node::TypeSpecifier(_) | Node::TypeQualifier(_) => {
@@ -194,11 +234,6 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
             print_ast(init_declarator_list, new_prefix, true);
         }
 
-        Node::InitDeclarator{ declarator, initializer} => {
-            print_ast_prefix(new_prefix.clone(), false);
-            println!("{declarator}");
-            print_ast(initializer, new_prefix, true);
-        }
         _ => {
             print!("Print AST node not implemented for {:?}", *start);
             return;
@@ -690,19 +725,19 @@ fn parse_initializer<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'are
 //	: declarator
 //	| declarator '=' initializer
 //	;
-fn parse_init_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
+fn parse_init_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena InitDeclaratorNode<'arena>, CompilationError<'arena>> {
     let declarator = parse_declarator(lexer, arena)?;
     match peek_token(lexer)? {
         Token::Assign => {
             next_token(lexer);
             let initializer = parse_initializer(lexer, arena)?;
-            let init_declarator = Node::InitDeclarator{ declarator, initializer};
+            let init_declarator = InitDeclaratorNode{ declarator, initializer};
             return Ok(arena.push(init_declarator)?);
         }
 
         _ => {
 
-            let init_declarator = Node::InitDeclarator{ declarator, initializer : arena.push(Node::Empty)? };
+            let init_declarator = InitDeclaratorNode{ declarator, initializer : arena.push(Node::Empty)? };
             return Ok(arena.push(init_declarator)?);
         },
     }
@@ -713,7 +748,21 @@ fn parse_init_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &
 //	| init_declarator_list ',' init_declarator
 fn parse_init_declarator_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     // TODO: Implement init_declarator_list
-    return parse_init_declarator(lexer, arena);
+    let init_declarator = parse_init_declarator(lexer, arena)?;
+    let mut list = vec![init_declarator];
+    while let Token::Comma = *peek_token(lexer)? {
+        next_token(lexer);
+        list.push(parse_init_declarator(lexer, arena)?);
+    }
+
+    if list.len() == 1 {
+        // if we only encountered one init declarator, just return the single init declarator on it's own
+        return Ok(arena.push(Node::InitDeclarator(init_declarator))?);
+    } else {
+        let list = arena.push_slice_copy(&list[..])?;
+        let node = arena.push(Node::InitDeclaratorList(list))?;
+        return Ok(node);
+    }
 }
 
 // declaration
@@ -951,10 +1000,10 @@ fn parse_external_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
             if let Node::Declaration{ declaration_specifiers, init_declarator_list} = *declaration {
                 func_declaration_specifiers = declaration_specifiers;
 
-                if let Node::InitDeclarator{ declarator, initializer } = *init_declarator_list {
-                    let first_type = declarator.derived_types.last().ok_or(CompilationError::UnableToDecomposeDeclaration)?;
+                if let Node::InitDeclarator(init_node) = *init_declarator_list {
+                    let first_type = init_node.declarator.derived_types.last().ok_or(CompilationError::UnableToDecomposeDeclaration)?;
                     match first_type {
-                        DerivedType::Function{ .. } | DerivedType::FunctionParameterless => func_declarator = declarator,
+                        DerivedType::Function{ .. } | DerivedType::FunctionParameterless => func_declarator = init_node.declarator,
                         _ => return Err(CompilationError::UnableToDecomposeDeclaration),
                     }
                 } else {

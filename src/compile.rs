@@ -41,7 +41,10 @@ pub fn parse_only(input : &str){
 
     let lexer = &mut Lexer::new(&input, &arena).peekable();
     match parse_translational_unit(lexer, arena) {
-        Ok(node) => print_ast(node, "".to_string(), true),
+        Ok(node) => {
+            println!("{:?}", node);
+            print_ast(node, "".to_string(), true);
+        }
         Err(e) => println!("{e}"),
     }
 }

@@ -1,4 +1,4 @@
-use std::alloc::{alloc, Layout};
+use std::alloc::{alloc, Layout, dealloc};
 use std::cell::UnsafeCell;
 use std::ptr;
 use std::slice;
@@ -20,21 +20,25 @@ pub struct Arena {
     start : UnsafeCell<usize>,
     next : UnsafeCell<usize>,
     end : UnsafeCell<usize>,
+
+    layout : Layout,
 }
 
 impl<'arena> Arena {
     pub fn new(capacity : usize) -> Arena {
         
-        let next : usize;
+        let layout : Layout;
+        let start : usize;
         unsafe { 
-            let layout = Layout::from_size_align_unchecked(capacity, 1);
-            next = alloc(layout) as usize;
+            layout = Layout::from_size_align_unchecked(capacity, 1);
+            start = alloc(layout) as usize;
         }   
 
         Arena {
-            start : UnsafeCell::new(next),
-            next : UnsafeCell::new(next),
-            end : UnsafeCell::new(next + capacity)
+            start : UnsafeCell::new(start),
+            next : UnsafeCell::new(start),
+            end : UnsafeCell::new(start + capacity),
+            layout
         }
     }
 
@@ -44,7 +48,7 @@ impl<'arena> Arena {
     }
 
 
-    pub fn push_slice_copy<T : Copy + Debug>(self : &'arena Arena, slice : &[T]) -> Result<&'arena [T], CompilationError>
+    pub fn push_slice_copy<T : Copy>(self : &'arena Arena, slice : &[T]) -> Result<&'arena [T], CompilationError>
     {
         let layout = Layout::for_value(slice);
         //println!("Allocating slice {:?}, space required: {}", slice, layout.size());
@@ -92,5 +96,11 @@ impl<'arena> Arena {
                 return Ok(dest_start);
             }
         } 
+    }
+}
+
+impl Drop for Arena {
+    fn drop(&mut self){
+        unsafe { dealloc(*self.start.get() as *mut u8, self.layout); }
     }
 }

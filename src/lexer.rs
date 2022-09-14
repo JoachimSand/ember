@@ -90,6 +90,7 @@ pub enum Token<'t> {
     Ternary,
     PtrOperand,
     Dot,
+    Comma,
     Colon,
     Semicolon,
     LParen,
@@ -142,7 +143,7 @@ impl <'input> Iterator for Lexer <'input> {
     fn next(&mut self) -> Option<Self::Item> {    
 
         let token = self.advance_tokens();
-        //println!("{:?}", token);
+        println!("{:?}", token);
         return token;
     }
 }
@@ -326,7 +327,6 @@ impl <'input> Lexer<'input> {
                                 }
                             }
                         }
-                        
                     }
                 );
             }
@@ -404,6 +404,7 @@ impl <'input> Lexer<'input> {
             '~' => return Some(Token::Negation),
             '?' => return Some(Token::Ternary),
             '.' => return Some(Token::Dot),
+            ',' => return Some(Token::Comma),
             ';' => return Some(Token::Semicolon),
             ':' => return Some(Token::Colon),
             '(' => return Some(Token::LParen), 
