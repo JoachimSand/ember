@@ -10,6 +10,7 @@ pub enum Token<'t> {
     IntegerLiteral(i64),
     FloatLiteral(f32),
     DoubleLiteral(f64),
+    StringLiteral(&'t str),
 
     // Arithmetic Operators
     Plus,
@@ -239,6 +240,30 @@ impl <'input> Lexer<'input> {
                     }
                 }
             }
+
+            '"' => {
+
+                let string_literal = &mut String::new();
+
+                while let Some(c) = self.char_stream.next() {
+                    if c == '\"' {
+                        break;
+                    }
+
+                    if c == '\\' {
+                        let escaped_char = self.char_stream.next()?;
+                        string_literal.push(escaped_char);
+                        
+                    } else if c.is_ascii() {
+                        string_literal.push(c);
+                    }
+                }
+
+                let literal = self.arena.push_str(string_literal.as_str()).unwrap();
+                return Some(Token::StringLiteral(literal));
+            }
+
+            
 
             '0'..='9' => { 
                 let num_literal_str = &mut String::new();

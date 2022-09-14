@@ -12,7 +12,7 @@ pub struct UnaryNode<'n> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DerivedType<'n> {
-    Pointer,
+    Pointer{ is_const : bool, is_volatile : bool },
     Array { size : Option<i64> },
     Function { parameter_list : &'n Node<'n> },
     FunctionParameterless,
@@ -35,6 +35,12 @@ pub struct InitDeclaratorNode<'n> {
     pub initializer : &'n Node<'n>
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IfNode<'n> {
+    pub condition : &'n Node<'n>,
+    pub statement : &'n Node<'n>
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Node<'n> {
     TranslationalUnit{external_declarations : &'n [&'n Node<'n>]},
@@ -48,6 +54,8 @@ pub enum Node<'n> {
     InitDeclarator(&'n InitDeclaratorNode<'n>),
     InitDeclaratorList(&'n [&'n InitDeclaratorNode<'n>]),
     
+    IfStatementList(&'n [&'n IfNode<'n>]),
+
     FunctionCall{ function_name : &'n Node<'n>, arguments : &'n Node<'n>},
     ArrayIndex{ lvalue : &'n Node<'n>, index : &'n Node<'n>},
     
@@ -84,9 +92,19 @@ impl<'n> fmt::Display for DeclaratorNode<'n> {
         let mut iter = self.derived_types.iter().peekable();
 
         while let Some(node) = iter.next() {
-            match node {
-                DerivedType::Pointer => { write!(f, "* ")?; }
-                DerivedType::FunctionParameterless => { write!(f, "() ")?; }
+            match *node {
+                DerivedType::Pointer{is_const, is_volatile} =>{
+                    if is_const {
+                        write!(f, "c")?;
+                    }
+
+                    if is_volatile {
+                        write!(f, "v")?;
+                    }
+
+                    write!(f, "* ")?;
+                }
+                DerivedType::FunctionParameterless => write!(f, "() ")?,
                 DerivedType::Array { size }=> { 
                     if let Some(size) = size {
                         write!(f, "[{}] ", size)?;
@@ -94,11 +112,10 @@ impl<'n> fmt::Display for DeclaratorNode<'n> {
                         write!(f, "[] ")?;
                     }
                 }
-                _ => { write!(f, "Unimplemented")?; }
+                _ => write!(f, "Unimplemented")?,
             }
-            ()
         }
-        write!(f, "")
+        Ok(())
     }
 }
 
@@ -111,9 +128,11 @@ impl<'n> fmt::Display for Node<'n> {
             Node::DeclarationList(_) => write!(f, "Declaration List"),
             Node::StatementList(_) => write!(f, "Statement List"),
         
+            Node::Declaration{..} => write!(f, "Declaration"),
             Node::InitDeclaratorList(_) => write!(f, "Init Declarator List"),
             Node::InitDeclarator(_) => write!(f, "Init Declarator"),
-            Node::Declaration{..} => write!(f, "Declaration"),
+
+            Node::IfStatementList(_) => write!(f, "If Statement List"),
             /*
             Node::ArrayIndex(_) => write!(f, "Array Index"),
             Node::FunctionCall(_) => write!(f, "Function Call"),
@@ -156,8 +175,12 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
     match *start {
         
         Node::FunctionDefinition{ declaration_specifiers, declarator, compound_statement} => {
-            //print_ast(declaration_specifiers, new_prefix.clone(), false);
-            //print_ast(declarator, new_prefix.clone(), false);
+            print_ast_prefix(new_prefix.clone(), false);
+            println!("{declaration_specifiers}");
+
+            print_ast_prefix(new_prefix.clone(), false);
+            println!("{declarator}");
+
             print_ast(compound_statement, new_prefix, true);
         }
 
@@ -206,6 +229,33 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
             println!("{}", node.declarator);
             print_ast_prefix(new_prefix.clone(), true);
             println!("{}", node.initializer);
+        }
+
+        Node::IfStatementList(list) => {
+            if list.len() == 0 {
+                print_ast_prefix(new_prefix.clone(), true);
+                println!("Empty");
+                return;
+            }
+
+            let mut iter = list.iter().peekable();
+
+            while let Some(node) = iter.next() {
+                if iter.peek().is_some() {
+                    let if_prefix = print_ast_prefix(new_prefix.clone(), false);
+                    println!("If Statement");
+
+                    print_ast(node.condition, if_prefix.clone(), false);
+                    print_ast(node.statement, if_prefix.clone(), true); 
+
+                } else {
+                    let if_prefix = print_ast_prefix(new_prefix.clone(), true);
+                    println!("If Statement");
+
+                    print_ast(node.condition, if_prefix.clone(), false);
+                    print_ast(node.statement, if_prefix.clone(), true); 
+                }
+            }
         }
 
         Node::Empty | Node::Identifier{..} | Node::Literal(_) | Node::TypeSpecifier(_) | Node::TypeQualifier(_) => {
@@ -340,7 +390,7 @@ pub fn parse_primary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'are
             return Ok(node);
         }
 
-        Token::IntegerLiteral(_) | Token::FloatLiteral(_) | Token::DoubleLiteral(_) => {
+        Token::IntegerLiteral(_) | Token::FloatLiteral(_) | Token::DoubleLiteral(_) | Token::StringLiteral(_) => {
             let node = arena.push(Node::Literal(cur_token))?;
             return Ok(node);
         }
@@ -420,14 +470,6 @@ fn parse_unary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Are
 {
     let peek_token = peek_token(lexer)?;
     match peek_token {
-        /*
-        Token::IntegerLiteral(_) | Token::FloatLiteral(_) | Token::DoubleLiteral(_) => {
-            let token = next_token(lexer).ok_or(CompilationError::EarlyLexerTermination)?;
-            let node = Node::Literal(token);
-            return Ok(Box::new(node));
-        }
-        */
-
         Token::Increment | Token::Decrement | Token::Ampersand | Token::Asterisk | 
         Token::Plus | Token::Minus | Token::Negation => {
             //TODO: casting. Currently this calls a unary expression
@@ -546,10 +588,47 @@ fn eval_const_expression<'e>(node : &Node) -> Result<i64, CompilationError<'e>> 
 }
 
 
+//struct_or_union
+//	: STRUCT
+//	| UNION
+
+//struct_or_union_specifier
+//	: struct_or_union IDENTIFIER '{' struct_declaration_list '}'
+//	| struct_or_union '{' struct_declaration_list '}'
+//	| struct_or_union IDENTIFIER
+/*
+fn parse_struct_or_union_specifier<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
+    let struct_type : Token;
+
+    match next_token(lexer)? {
+        Token::Struct => Token::Struct,
+        Token::Union => Token::Union,
+        _ => Token::Struct,
+    };
+}*/
+
+
+
+
+//type_specifier
+//	: VOID
+//	| CHAR
+//	| SHORT
+//	| INT
+//	| LONG
+//	| FLOAT
+//	| DOUBLE
+//	| SIGNED
+//	| UNSIGNED
+//	| struct_or_union_specifier
+//	| enum_specifier
+//	| TYPE_NAME
+//	;
 fn parse_type_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<Token<'t>, CompilationError<'t>> {
     let cur_token = peek_token(lexer)?;
     match cur_token {
-        Token::Char | Token::Int | Token::Float | Token::Double => {
+        Token::Void | Token::Char | Token::Short | Token::Int | Token::Long | Token::Float |
+        Token::Double | Token::Signed | Token::Unsigned => {
             let cur_token = next_token(lexer);
             return Ok(cur_token?);
         }
@@ -563,8 +642,14 @@ fn parse_type_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Res
 fn parse_declaration_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<Token<'t>, CompilationError<'t>> {
     let cur_token = peek_token(lexer)?;
     match cur_token {
-        // Token::Typedef | Token::Extern | Token::Static | Token::Auto | Token::Register
+        // Type qualifiers
         Token::Const | Token::Volatile => { // type qualifer
+            let cur_token = next_token(lexer)?;
+            return Ok(cur_token);
+        }
+        
+        // Storage class specifiers
+        Token::Typedef | Token::Extern | Token::Static | Token::Auto | Token::Register => {
             let cur_token = next_token(lexer)?;
             return Ok(cur_token);
         }
@@ -633,11 +718,33 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
     
     // parse pointer derived types but don't push them to list of derived types on the way down
     // the declarator tree
-    let mut pointer_count = 0;
-    while let Token::Asterisk = peek_token(lexer)? {
+    let mut pointer_derived_types = Vec::<DerivedType>::new();
+    loop {
+        match peek_token(lexer)? {
+            Token::Const => {
+                let p = pointer_derived_types.last_mut().ok_or(CompilationError::UnexpectedToken(Token::Const))?;
+                
+                if let DerivedType::Pointer{ is_volatile, .. } = *p {
+                    *p = DerivedType::Pointer{ is_const : true, is_volatile };
+                }
+            }
+
+            Token::Volatile => {
+                let p = pointer_derived_types.last_mut().ok_or(CompilationError::UnexpectedToken(Token::Const))?;
+                
+                if let DerivedType::Pointer{ is_const, .. } = *p {
+                    *p = DerivedType::Pointer{ is_const, is_volatile : true };
+                }
+            }
+            
+            Token::Asterisk => {
+                pointer_derived_types.push(DerivedType::Pointer{ is_const : false, is_volatile : false});
+            }
+            _ => break,
+        }
         next_token(lexer)?;
-        pointer_count += 1;
     }
+
 
     let cur_token = next_token(lexer)?;
     match cur_token {
@@ -683,10 +790,8 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
         }
     }
 
-    // ... finally push the pointer derived types which were parsed on the way down
-    for _ in 0..pointer_count {
-        derived_types.push(DerivedType::Pointer);
-    }
+    // ... finally push the prefix derived types which were parsed on the way down
+    derived_types.append(&mut pointer_derived_types);
 
     return Ok(());
 }
@@ -813,6 +918,7 @@ fn parse_declaration_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : 
     }
 }
 
+
 //statement
 //	: labeled_statement
 //	| compound_statement
@@ -822,10 +928,56 @@ fn parse_declaration_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : 
 //	| jump_statement
 //	;
 pub fn parse_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
-    let peek_token = peek_token(lexer)?;
+    let peek = peek_token(lexer)?;
 
-    match peek_token {
+    match peek {
+        //selection_statement
+        //	: IF '(' expression ')' statement
+        //	| IF '(' expression ')' statement ELSE statement
+        //	| SWITCH '(' expression ')' statement
+        Token::If => {
+            let mut if_vec = Vec::<&IfNode>::new();
 
+            // Rather than parsing if statements recursively,
+            // we attempt to parse all if statements on the same "level"
+            // into a single list which can be iterated over. This should
+            // make SSA/codegen easier.
+            loop {
+                next_token(lexer)?; // consume if
+                expect_token(lexer, Token::LParen)?;
+                let condition = parse_expr(lexer, arena, 0)?;
+                expect_token(lexer, Token::RParen)?;
+                let statement = parse_statement(lexer, arena)?;
+                let if_node = arena.push(IfNode{ condition, statement })?;
+                if_vec.push(if_node);
+
+                if let Token::Else = peek_token(lexer)? {
+                    next_token(lexer)?;
+
+                    if let Token::If = peek_token(lexer)? {
+                        // 
+                        continue;
+                    } else {
+                        // Just an else with no condition: this ends the series of
+                        // if-else statements
+                        let else_statement = parse_statement(lexer, arena)?;
+                        let else_condition = arena.push(Node::Empty)?;
+                        let else_node = arena.push(IfNode{condition : else_condition, statement: else_statement})?;
+                        if_vec.push(else_node);
+                        break;
+                    }
+                } else {
+                    break;
+                } 
+            }
+
+            let if_slice = arena.push_slice_copy(&if_vec[..])?;
+            let node = Node::IfStatementList(if_slice);
+            return Ok(arena.push(node)?);
+
+
+                
+        }
         //jump_statement
         //    : GOTO IDENTIFIER ';'
         //    | CONTINUE ';'
@@ -874,8 +1026,20 @@ pub fn parse_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'a
             }
         }
 
-        Token::LCurlyBracket => return parse_compound_statement(lexer, arena),
+        //labeled_statement
+        //	: IDENTIFIER ':' statement
+        //	| CASE constant_expression ':' statement
+        //	| DEFAULT ':' statement
+        // TODO: Support the topmost production rule.
+        // This is difficult since both expression and labeled_statement can
+        // start with an identifier.
+        /*Token::Case => {
 
+        }*/
+
+
+
+        Token::LCurlyBracket => return parse_compound_statement(lexer, arena),
         //expression_statement
         //    : ';'
         //    | expression ';'

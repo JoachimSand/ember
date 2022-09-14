@@ -3,7 +3,7 @@ int a = 1;
 
 int main() {
     int test = 2;
-    int test = 3;
+    char test_1 = 'a';
     int *test_2 = &a;
 }
 
