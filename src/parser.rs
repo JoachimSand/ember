@@ -18,9 +18,31 @@ pub enum DerivedType<'n> {
     FunctionParameterless,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StructSpecifierNode<'n>{
+    is_union : bool, 
+    name: Option<&'n str>, 
+    declaration_list : Option<&'n [&'n StructDeclarationNode<'n>]>
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Specifier<'n> {
+    StorageClass(Token<'n>),
+    TypeQualifier(Token<'n>),
+    BasicType(Token<'n>),
+    Struct(StructSpecifierNode<'n>),
+}
+
 #[derive(Clone, Debug, PartialEq)]
-pub struct DeclarationSpecifiersNode<'n> {
-    pub specifiers : &'n [Token<'n>],
+pub struct StructDeclarationNode<'n> {
+    pub specifier_qualifier_list : &'n SpecifierList<'n>,
+    // we don't support bit fields: a struct declarator is the exact same as a normal declarator
+    pub struct_declarator_list : &'n [&'n DeclaratorNode<'n>],
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpecifierList<'n> {
+    pub specifiers : &'n [&'n Specifier<'n>],
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -35,25 +57,27 @@ pub struct InitDeclaratorNode<'n> {
     pub initializer : &'n Node<'n>
 }
 
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IfNode<'n> {
     pub condition : &'n Node<'n>,
     pub statement : &'n Node<'n>
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Node<'n> {
     TranslationalUnit{external_declarations : &'n [&'n Node<'n>]},
-    FunctionDefinition{ declaration_specifiers : &'n DeclarationSpecifiersNode<'n>, declarator : &'n DeclaratorNode<'n>, compound_statement : &'n Node<'n>},
+    FunctionDefinition{ declaration_specifiers : &'n SpecifierList<'n>, declarator : &'n DeclaratorNode<'n>, compound_statement : &'n Node<'n>},
     
     CompoundStatement{ declaration_list : &'n Node<'n>, statement_list : &'n Node<'n>},
     DeclarationList(&'n [&'n Node<'n>]),
     StatementList(&'n [&'n Node<'n>]),
 
-    Declaration{ declaration_specifiers : &'n DeclarationSpecifiersNode<'n>, init_declarator_list : &'n Node<'n>},
+    Declaration{ declaration_specifiers : &'n SpecifierList<'n>, init_declarator_list : &'n Node<'n>},
     InitDeclarator(&'n InitDeclaratorNode<'n>),
     InitDeclaratorList(&'n [&'n InitDeclaratorNode<'n>]),
-    
+    InitializerList(&'n [&'n Node<'n>]),
+
     IfStatementList(&'n [&'n IfNode<'n>]),
 
     FunctionCall{ function_name : &'n Node<'n>, arguments : &'n Node<'n>},
@@ -63,10 +87,6 @@ pub enum Node<'n> {
     Prefix(UnaryNode<'n>),
     Postfix(UnaryNode<'n>),
 
-    TypeQualifier(Token<'n>),
-    TypeSpecifier(Token<'n>),
-    _StorageSpecifier(Token<'n>),
-    
     Goto{ goto_id : &'n str},
     Return{ expression : &'n Node<'n>},
     Identifier{ name: &'n str },
@@ -74,9 +94,46 @@ pub enum Node<'n> {
     Empty,
 }
 
-impl<'n> fmt::Display for DeclarationSpecifiersNode<'n> {
+impl<'n> fmt::Display for StructSpecifierNode<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "Declaration Specifiers {:?}", self.specifiers)
+        if self.is_union {
+            write!(f, "union ")?;
+        } else {
+            write!(f, "struct ")?;
+        }
+
+        if let Some(name) = self.name {
+            write!(f, "{:?}", name)?;
+        } else {
+            write!(f, "anonymous ")?;
+        }
+        Ok(())
+    }
+}
+
+impl<'n> fmt::Display for Specifier<'n> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
+        match self {
+            Specifier::StorageClass(token) | Specifier::TypeQualifier(token) | Specifier::BasicType(token) => {
+                write!(f, "{:?}", token)
+            }
+
+            Specifier::Struct(node) => {
+                write!(f, "{}", node)
+            }
+        }
+    }
+}
+
+impl<'n> fmt::Display for StructDeclarationNode<'n> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
+        write!(f, "Struct Declaration")
+    }
+}
+
+impl<'n> fmt::Display for SpecifierList<'n> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
+        write!(f, "Specifiers")
     }
 }
 
@@ -119,6 +176,18 @@ impl<'n> fmt::Display for DeclaratorNode<'n> {
     }
 }
 
+impl<'n> fmt::Display for InitDeclaratorNode<'n> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
+        write!(f, "Init Declarator")
+    }
+}
+
+impl<'n> fmt::Display for IfNode<'n> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
+        write!(f, "If Statement")
+    }
+}
+
 impl<'n> fmt::Display for Node<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -130,18 +199,19 @@ impl<'n> fmt::Display for Node<'n> {
         
             Node::Declaration{..} => write!(f, "Declaration"),
             Node::InitDeclaratorList(_) => write!(f, "Init Declarator List"),
-            Node::InitDeclarator(_) => write!(f, "Init Declarator"),
-
+            Node::InitDeclarator(node) => write!(f, "{}", node),
+            Node::InitializerList(_) => write!(f, "Initializer List"),
+            
             Node::IfStatementList(_) => write!(f, "If Statement List"),
             /*
             Node::ArrayIndex(_) => write!(f, "Array Index"),
             Node::FunctionCall(_) => write!(f, "Function Call"),
             */
 
-            Node::TypeSpecifier(t) => write!(f, "{:?}", t),
-            Node::TypeQualifier(t) => write!(f, "{:?}", t),
-            Node::_StorageSpecifier(t) => write!(f, "{:?}", t),
-            
+            //Node::TypeSpecifier(t) => write!(f, "{:?}", t),
+            //Node::TypeQualifier(t) => write!(f, "{:?}", t),
+            //Node::StorageSpecifier(t) => write!(f, "{:?}", t),
+            Node::Return { .. } => write!(f, "Return"),  
             Node::Infix{operator, ..} => write!(f, "I{:?}", operator),
             Node::Prefix(n) => write!(f, "Prefix {:?}", n.operator),
             Node::Postfix(n) => write!(f, "Postfix {:?}", n.operator),
@@ -168,6 +238,62 @@ fn print_ast_prefix(prefix : String, is_last : bool) -> String{
     return new_prefix;
 }
 
+pub fn print_ast_list<'n, T : fmt::Display, F: Fn(T, String, bool)>(node_list : impl IntoIterator<Item = T>, prefix : String, is_last : bool, print_child : bool, f : F)
+{
+    //let new_prefix = print_ast_prefix(prefix.clone(), is_last);
+    let mut iter = node_list.into_iter().peekable();
+
+    // If list is empty
+    if iter.peek().is_none() {
+        print_ast_prefix(prefix.clone(), is_last);
+        println!("Empty");
+        return;
+    }
+
+    while let Some(child) = iter.next(){
+        if iter.peek().is_some() {
+            if print_child {
+                let child_prefix = print_ast_prefix(prefix.clone(), false);
+                println!("{}", child);
+                f(child, child_prefix, false);
+            } else {
+                f(child, prefix.clone(), false);
+            }
+        } else {
+            if print_child {
+                let child_prefix = print_ast_prefix(prefix.clone(), is_last);
+                println!("{}", child);
+                f(child, child_prefix, true);
+            } else {
+                f(child, prefix.clone(), true);
+            }
+        }
+    }
+}
+
+pub fn print_ast_specifiers(specifiers_node : &SpecifierList, prefix : String, is_last : bool){
+    let specifiers_prefix = print_ast_prefix(prefix.clone(), is_last);
+    println!("{}", specifiers_node);
+    
+    let print_specifier = |child : &&Specifier, list_prefix : String, is_last : bool | {
+        match child {
+            Specifier::Struct(struct_specifier) => {
+                //let specifier_prefix = print_ast_prefix(list_prefix.clone(), is_last)
+                let print_struct_declaration = |declaration : &&StructDeclarationNode, prefix : String, _ : bool | {
+                    print_ast_specifiers(declaration.specifier_qualifier_list, prefix.clone(), false);
+                    print_ast_list(declaration.struct_declarator_list, prefix, true, true, |_, _, _| ());
+                };
+
+                if let Some(declaration_list) = struct_specifier.declaration_list {
+                    print_ast_list(declaration_list.iter(), list_prefix.clone(), is_last, true, print_struct_declaration);
+                }
+            }
+            _ => return,
+        }
+    };
+    print_ast_list(specifiers_node.specifiers.iter(), specifiers_prefix, true, true, print_specifier);
+}
+
 pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
     let new_prefix = print_ast_prefix(prefix, is_last);
     println!("{}", start);
@@ -175,8 +301,7 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
     match *start {
         
         Node::FunctionDefinition{ declaration_specifiers, declarator, compound_statement} => {
-            print_ast_prefix(new_prefix.clone(), false);
-            println!("{declaration_specifiers}");
+            print_ast_specifiers(declaration_specifiers, new_prefix.clone(), false);
 
             print_ast_prefix(new_prefix.clone(), false);
             println!("{declarator}");
@@ -190,75 +315,36 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
         }
 
         // quite possibly the coolest Rust syntax I have encountered so far
-        Node::DeclarationList(list) | Node::StatementList(list) | Node::TranslationalUnit { external_declarations: list @ _ }=> {
-            if list.len() == 0 {
-                print_ast_prefix(new_prefix.clone(), true);
-                println!("Empty");
-                return;
-            }
-
-
-            let mut iter = list.iter().peekable();
-
-            while let Some(node) = iter.next() {
-                if iter.peek().is_some() {
-                    print_ast(node, new_prefix.clone(), false);
-                } else {
-                    print_ast(node, new_prefix.clone(), true);
-                }
-            }
-
+        Node::DeclarationList(list) | Node::StatementList(list) | Node::InitializerList(list) | Node::TranslationalUnit { external_declarations: list @ _ }=> {
+            print_ast_list(list, new_prefix.clone(), true, false, |child, list_prefix, is_last| print_ast(child, list_prefix, is_last));
         }
 
         Node::InitDeclaratorList(list) => {
-            let mut iter = list.iter().peekable();
-
-            while let Some(node) = iter.next() {
-                if iter.peek().is_some() {
-                    let node = Node::InitDeclarator(node);
-                    print_ast(&node, new_prefix.clone(), false);
-                } else {
-                    let node = Node::InitDeclarator(node);
-                    print_ast(&node, new_prefix.clone(), true);
-                }
-            }
+            print_ast_list(list, new_prefix.clone(), true, false, |child, list_prefix, is_last| print_ast(&Node::InitDeclarator(child), list_prefix, is_last));
         }
 
         Node::InitDeclarator(node) => {
             print_ast_prefix(new_prefix.clone(), false);
             println!("{}", node.declarator);
-            print_ast_prefix(new_prefix.clone(), true);
-            println!("{}", node.initializer);
+            print_ast(node.initializer, new_prefix, true);
         }
 
         Node::IfStatementList(list) => {
-            if list.len() == 0 {
-                print_ast_prefix(new_prefix.clone(), true);
-                println!("Empty");
-                return;
-            }
 
-            let mut iter = list.iter().peekable();
+            let print_if_statement = |child : &&IfNode, child_prefix : String, is_last : bool | {
+                print_ast(child.condition, child_prefix.clone(), false);
+                print_ast(child.statement, child_prefix, true); 
+            };
 
-            while let Some(node) = iter.next() {
-                if iter.peek().is_some() {
-                    let if_prefix = print_ast_prefix(new_prefix.clone(), false);
-                    println!("If Statement");
+            print_ast_list(list, new_prefix.clone(), true, true, print_if_statement); 
 
-                    print_ast(node.condition, if_prefix.clone(), false);
-                    print_ast(node.statement, if_prefix.clone(), true); 
-
-                } else {
-                    let if_prefix = print_ast_prefix(new_prefix.clone(), true);
-                    println!("If Statement");
-
-                    print_ast(node.condition, if_prefix.clone(), false);
-                    print_ast(node.statement, if_prefix.clone(), true); 
-                }
-            }
         }
 
-        Node::Empty | Node::Identifier{..} | Node::Literal(_) | Node::TypeSpecifier(_) | Node::TypeQualifier(_) => {
+        Node::Return { expression } => {
+            print_ast(expression, new_prefix, true);
+        }
+
+        Node::Empty | Node::Identifier{..} | Node::Literal(_) => {
             return;
         }
         Node::Infix{ left, right, .. } => {
@@ -278,9 +364,7 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
         }*/
 
         Node::Declaration{ declaration_specifiers, init_declarator_list} => {
-            print_ast_prefix(new_prefix.clone(), false);
-            println!("{declaration_specifiers}");
-            //print_ast(declaration_specifiers, new_prefix.clone(), false);
+            print_ast_specifiers(declaration_specifiers, new_prefix.clone(), false);
             print_ast(init_declarator_list, new_prefix, true);
         }
 
@@ -587,28 +671,81 @@ fn eval_const_expression<'e>(node : &Node) -> Result<i64, CompilationError<'e>> 
 
 }
 
+//struct_declarator
+//	: declarator
+//	| ':' constant_expression BITFIELD 
+//	| declarator ':' constant_expression BITFIELD
+// Bitfields are not implemented - a struct declarator is just treated as a normal declarator
 
-//struct_or_union
-//	: STRUCT
-//	| UNION
+//struct_declarator_list
+//	: struct_declarator
+//	| struct_declarator_list ',' struct_declarator
+
+//struct_declaration
+//	: specifier_qualifier_list struct_declarator_list ';'
+fn parse_struct_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena StructDeclarationNode<'arena>, CompilationError<'arena>> {
+    let specifier_qualifier_list = parse_specifier_qualifier_list(lexer, arena)?;
+
+    let declarator = parse_declarator(lexer, arena)?;
+    let mut declarator_list = vec![declarator];
+
+    while let Token::Comma = peek_token(lexer)? {
+        next_token(lexer)?;
+        declarator_list.push(parse_declarator(lexer, arena)?);
+    }
+
+    expect_token(lexer, Token::Semicolon)?;
+
+    let struct_declarator_list = arena.push_slice_copy(&declarator_list[..])?;
+    let node = StructDeclarationNode{ specifier_qualifier_list, struct_declarator_list};
+    return Ok(arena.push(node)?);
+}
 
 //struct_or_union_specifier
 //	: struct_or_union IDENTIFIER '{' struct_declaration_list '}'
 //	| struct_or_union '{' struct_declaration_list '}'
 //	| struct_or_union IDENTIFIER
-/*
-fn parse_struct_or_union_specifier<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
-    let struct_type : Token;
 
-    match next_token(lexer)? {
-        Token::Struct => Token::Struct,
-        Token::Union => Token::Union,
-        _ => Token::Struct,
-    };
-}*/
+//struct_or_union
+//	: STRUCT
+//	| UNION
+fn parse_struct_or_union_specifier<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<StructSpecifierNode<'arena>, CompilationError<'arena>> {
 
+    let mut struct_node = StructSpecifierNode { is_union: false, name: None, declaration_list: None };
 
+    let mut cur_token = next_token(lexer)?;
+    match cur_token {
+        Token::Struct => struct_node.is_union = false,
+        Token::Union => struct_node.is_union = true,
+        _ => return Err(CompilationError::UnexpectedToken(cur_token)),
+    }
 
+    cur_token = next_token(lexer)?;
+    if let Token::Identifier(id_name) = cur_token {
+        struct_node.name = Some(id_name);
+
+        if let Token::LCurlyBracket = *peek_token(lexer)? { 
+            cur_token = next_token(lexer)?;
+        }
+    }
+
+    //struct_declaration_list
+    //;	: struct_declaration
+    //;	| struct_declaration_list struct_declaration
+    if let Token::LCurlyBracket = cur_token {
+        let declaration = parse_struct_declaration(lexer, arena)?;
+        let mut declaration_list = vec![declaration];
+        while let Ok(declaration) = parse_struct_declaration(lexer, arena) {
+            declaration_list.push(declaration);
+        }
+
+        struct_node.declaration_list = Some(arena.push_slice_copy(&declaration_list[..])?);
+
+        expect_token(lexer, Token::RCurlyBracket)?;
+    } 
+
+    return Ok(struct_node);
+}
 
 //type_specifier
 //	: VOID
@@ -624,42 +761,38 @@ fn parse_struct_or_union_specifier<'arena>(lexer : &mut Peekable<Lexer<'arena>>,
 //	| enum_specifier
 //	| TYPE_NAME
 //	;
-fn parse_type_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<Token<'t>, CompilationError<'t>> {
+fn parse_type_specifier<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Specifier<'arena>, CompilationError<'arena>> {
     let cur_token = peek_token(lexer)?;
     match cur_token {
         Token::Void | Token::Char | Token::Short | Token::Int | Token::Long | Token::Float |
         Token::Double | Token::Signed | Token::Unsigned => {
-            let cur_token = next_token(lexer);
-            return Ok(cur_token?);
+            let cur_token = next_token(lexer)?;
+            let type_specifier = arena.push(Specifier::BasicType(cur_token))?;
+            return Ok(type_specifier);
+        }
+
+        Token::Struct | Token::Union => {
+            let struct_specifier = parse_struct_or_union_specifier(lexer, arena)?;
+            let type_specifier = Specifier::Struct(struct_specifier);
+            return Ok(arena.push(type_specifier)?);
         }
         _ => {
             // Handle user defined types
-            return Err(CompilationError::NotImplemented);
+            return Err(CompilationError::UnexpectedToken(*cur_token));
         }
     }
 }
 
-fn parse_declaration_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>) -> Result<Token<'t>, CompilationError<'t>> {
-    let cur_token = peek_token(lexer)?;
-    match cur_token {
-        // Type qualifiers
-        Token::Const | Token::Volatile => { // type qualifer
-            let cur_token = next_token(lexer)?;
-            return Ok(cur_token);
-        }
-        
-        // Storage class specifiers
-        Token::Typedef | Token::Extern | Token::Static | Token::Auto | Token::Register => {
-            let cur_token = next_token(lexer)?;
-            return Ok(cur_token);
-        }
+//specifier_qualifier_list
+//	: type_specifier specifier_qualifier_list
+//	| type_specifier
+//	| type_qualifier specifier_qualifier_list
+//	| type_qualifier
 
-        _ => return parse_type_specifier(lexer),
-    }
+// TODO: This is very similar in structure to parsing declaration_specifiers. Might be worth combining the two 
+fn parse_specifier_qualifier_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena SpecifierList<'arena>, CompilationError<'arena>> {
+    parse_declaration_specifiers(lexer, arena, false)
 }
-
-
-
 // declaration_specifiers
 // 	: storage_class_specifier
 // 	| storage_class_specifier declaration_specifiers
@@ -667,20 +800,43 @@ fn parse_declaration_specifier<'l, 't : 'l>(lexer : &'l mut Peekable<Lexer<'t>>)
 // 	| type_specifier declaration_specifiers
 // 	| type_qualifier
 // 	| type_qualifier declaration_specifiers
-// 	;
-// TODO: Storage Class specifiers ignored for now
-fn parse_declaration_specifiers<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena DeclarationSpecifiersNode<'arena>, CompilationError<'arena>> {
+fn parse_declaration_specifier<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena, parse_storage_specifiers : bool) -> Result<&'arena Specifier<'arena>, CompilationError<'arena>> {
+    let cur_token = peek_token(lexer)?;
+    match cur_token {
+        // Type qualifiers
+        Token::Const | Token::Volatile => { // type qualifier
+            let cur_token = next_token(lexer)?;
+            let node = arena.push(Specifier::TypeQualifier(cur_token))?;
+            return Ok(node);
+        }
+        
+        // Storage class specifiers
+        Token::Typedef | Token::Extern | Token::Static | Token::Auto | Token::Register => {
+            if parse_storage_specifiers == false {
+                return Err(CompilationError::UnexpectedToken(*cur_token));
+            }
+
+            let cur_token = next_token(lexer)?;
+            let node = arena.push(Specifier::StorageClass(cur_token))?;
+            return Ok(node);
+        }
+
+        _ => return parse_type_specifier(lexer, arena),
+    }
+}
+
+fn parse_declaration_specifiers<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena, parse_storage_specifiers : bool) -> Result<&'arena SpecifierList<'arena>, CompilationError<'arena>> {
     // We require at least one declaration specifier
-    let specifier = parse_declaration_specifier(lexer)?;
+    let specifier = parse_declaration_specifier(lexer, arena, parse_storage_specifiers)?;
     
     let mut specifier_vec = vec![specifier];
     loop {
         // Parse as many specifiers as possible
-        if let Ok(specifier) = parse_declaration_specifier(lexer) {
+        if let Ok(specifier) = parse_declaration_specifier(lexer, arena, parse_storage_specifiers) {
             specifier_vec.push(specifier);
         } else {
             let specifiers = arena.push_slice_copy(&specifier_vec[..])?;
-            let node = arena.push(DeclarationSpecifiersNode{specifiers})?;
+            let node = arena.push(SpecifierList{specifiers})?;
             return Ok(node);
         }
     }
@@ -808,6 +964,31 @@ fn parse_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'aren
     return Ok(declarator);
 }
 
+//initializer_list
+//	: initializer
+//	| initializer_list ',' initializer
+//	;
+fn parse_initializer_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
+    let initializer = parse_initializer(lexer, arena)?;
+
+    let mut list = vec![initializer];
+
+    while let Token::Comma = peek_token(lexer)? {
+        next_token(lexer)?;
+        // An initializer_list can end with a trailing comma.
+        if let Token::LCurlyBracket = peek_token(lexer)? {
+            break;
+        } else {
+            list.push(parse_initializer(lexer, arena)?);
+        }
+    }
+
+    let slice = arena.push_slice_copy(&list[..])?;
+    let node = Node::InitializerList(slice);
+    return Ok(arena.push(node)?);
+}
+
+
 //initializer
 //	: assignment_expression
 //	| '{' initializer_list '}'
@@ -816,10 +997,10 @@ fn parse_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'aren
 fn parse_initializer<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     match peek_token(lexer)? {
         Token::LCurlyBracket => {
-            next_token(lexer);
-            // TODO: Implement initializer_list
-
-            return Err(CompilationError::NotImplemented);
+            next_token(lexer)?;
+            let initializer_list = parse_initializer_list(lexer, arena)?;
+            expect_token(lexer, Token::RCurlyBracket)?;
+            return Ok(initializer_list);
         }
 
         _ => return parse_expr(lexer, arena, 0),
@@ -876,7 +1057,7 @@ fn parse_init_declarator_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
 // 	;
 // e.g. void; int a = 3;
 pub fn parse_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena, consume_semicolon : bool) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
-    let declaration_specifiers = parse_declaration_specifiers(lexer, arena)?;
+    let declaration_specifiers = parse_declaration_specifiers(lexer, arena, true)?;
     let init_declarator_list : &Node;
 
     if Token::Semicolon == *peek_token(lexer)? { 
@@ -1008,19 +1189,17 @@ pub fn parse_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'a
 
         Token::Return => {
             next_token(lexer)?;
-            let cur_token = next_token(lexer)?;
-
-            match cur_token {
+            match peek_token(lexer)? {
                 Token::Semicolon => {
+                    next_token(lexer)?;
                     let node = Node::Return{expression : arena.push(Node::Empty)?};
                     return Ok(arena.push(node)?);
                 }
 
                 _ => {
-                    let err_token = cur_token.clone();
-                    let expression = parse_expr(lexer, arena, 0).map_err(|_| CompilationError::UnexpectedToken(err_token))?;
+                    let expression = parse_expr(lexer, arena, 0)?;
+                    expect_token(lexer, Token::Semicolon)?;
                     let node = Node::Return { expression };
-
                     return Ok(arena.push(node)?);
                 }
             }
@@ -1158,7 +1337,7 @@ fn parse_external_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
             // Left curly bracket - this external declaration must be a function_definition
             // we must now "extract" the declaration_specifiers and declarator from
             // the previously parsed declaration
-            let func_declaration_specifiers : &DeclarationSpecifiersNode;
+            let func_declaration_specifiers : &SpecifierList;
             let func_declarator : &DeclaratorNode;
 
             if let Node::Declaration{ declaration_specifiers, init_declarator_list} = *declaration {
