@@ -19,10 +19,9 @@ pub enum DerivedType<'n> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StructSpecifierNode<'n>{
-    is_union : bool, 
-    name: Option<&'n str>, 
-    declaration_list : Option<&'n [&'n StructDeclarationNode<'n>]>
+pub struct Enumerator<'n> {
+    name : &'n str,
+    val : Option<i32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -30,7 +29,8 @@ pub enum Specifier<'n> {
     StorageClass(Token<'n>),
     TypeQualifier(Token<'n>),
     BasicType(Token<'n>),
-    Struct(StructSpecifierNode<'n>),
+    Struct{ is_union : bool, name: Option<&'n str>, declaration_list : Option<&'n [&'n StructDeclarationNode<'n>]>},
+    Enum{ name: Option<&'n str>, enumerator_list : Option<&'n [&'n Enumerator<'n>]>}
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -79,6 +79,9 @@ pub enum Node<'n> {
     InitializerList(&'n [&'n Node<'n>]),
 
     IfStatementList(&'n [&'n IfNode<'n>]),
+    WhileStatement{ condition : &'n Node<'n>, statement : &'n Node<'n> },
+    DoWhileStatement{ statement : &'n Node<'n>, condition : &'n Node<'n>},
+    ForStatement{ init_statement : &'n Node<'n>, condition : &'n Node<'n>, iter_statement: &'n Node<'n>},
 
     FunctionCall{ function_name : &'n Node<'n>, arguments : &'n Node<'n>},
     ArrayIndex{ lvalue : &'n Node<'n>, index : &'n Node<'n>},
@@ -94,23 +97,6 @@ pub enum Node<'n> {
     Empty,
 }
 
-impl<'n> fmt::Display for StructSpecifierNode<'n> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        if self.is_union {
-            write!(f, "union ")?;
-        } else {
-            write!(f, "struct ")?;
-        }
-
-        if let Some(name) = self.name {
-            write!(f, "{:?}", name)?;
-        } else {
-            write!(f, "anonymous ")?;
-        }
-        Ok(())
-    }
-}
-
 impl<'n> fmt::Display for Specifier<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
         match self {
@@ -118,8 +104,28 @@ impl<'n> fmt::Display for Specifier<'n> {
                 write!(f, "{:?}", token)
             }
 
-            Specifier::Struct(node) => {
-                write!(f, "{}", node)
+            Specifier::Struct{ is_union, name, ..} => {
+                if *is_union {
+                    write!(f, "union ")?;
+                } else {
+                    write!(f, "struct ")?;
+                }
+
+                if let Some(name) = name {
+                    write!(f, "{:?}", name)?;
+                } else {
+                    write!(f, "anonymous ")?;
+                }
+                Ok(())
+            }
+
+            Specifier::Enum { name, .. } => {
+                if let Some(name) = name {
+                    write!(f, "enum {:?}", name)?;
+                } else {
+                    write!(f, "enum anonymous ")?;
+                }
+                Ok(())
             }
         }
     }
@@ -128,6 +134,17 @@ impl<'n> fmt::Display for Specifier<'n> {
 impl<'n> fmt::Display for StructDeclarationNode<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
         write!(f, "Struct Declaration")
+    }
+}
+
+impl<'n> fmt::Display for Enumerator<'n> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
+        write!(f, "Enumerator {:?}", self.name)?;
+        if let Some(val) = self.val {
+            write!(f, ", val: {}", val)
+        } else {
+            write!(f, ", val unspecified")
+        }
     }
 }
 
@@ -203,14 +220,13 @@ impl<'n> fmt::Display for Node<'n> {
             Node::InitializerList(_) => write!(f, "Initializer List"),
             
             Node::IfStatementList(_) => write!(f, "If Statement List"),
+            Node::WhileStatement {..} => write!(f, "While Statement"),
+            Node::DoWhileStatement{..} => write!(f, "Do While Statement"),
+            Node::ForStatement{..} => write!(f, "For Statement"),
             /*
             Node::ArrayIndex(_) => write!(f, "Array Index"),
             Node::FunctionCall(_) => write!(f, "Function Call"),
             */
-
-            //Node::TypeSpecifier(t) => write!(f, "{:?}", t),
-            //Node::TypeQualifier(t) => write!(f, "{:?}", t),
-            //Node::StorageSpecifier(t) => write!(f, "{:?}", t),
             Node::Return { .. } => write!(f, "Return"),  
             Node::Infix{operator, ..} => write!(f, "I{:?}", operator),
             Node::Prefix(n) => write!(f, "Prefix {:?}", n.operator),
@@ -277,15 +293,21 @@ pub fn print_ast_specifiers(specifiers_node : &SpecifierList, prefix : String, i
     
     let print_specifier = |child : &&Specifier, list_prefix : String, is_last : bool | {
         match child {
-            Specifier::Struct(struct_specifier) => {
+            Specifier::Struct { declaration_list, .. } => {
                 //let specifier_prefix = print_ast_prefix(list_prefix.clone(), is_last)
                 let print_struct_declaration = |declaration : &&StructDeclarationNode, prefix : String, _ : bool | {
                     print_ast_specifiers(declaration.specifier_qualifier_list, prefix.clone(), false);
                     print_ast_list(declaration.struct_declarator_list, prefix, true, true, |_, _, _| ());
                 };
 
-                if let Some(declaration_list) = struct_specifier.declaration_list {
+                if let Some(declaration_list) = declaration_list {
                     print_ast_list(declaration_list.iter(), list_prefix.clone(), is_last, true, print_struct_declaration);
+                }
+            }
+
+            Specifier::Enum { enumerator_list, .. } => {
+                if let Some(enumerator_list) = *enumerator_list {
+                    print_ast_list(enumerator_list, list_prefix, is_last, true, |_, _, _| ());
                 }
             }
             _ => return,
@@ -335,9 +357,23 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
                 print_ast(child.condition, child_prefix.clone(), false);
                 print_ast(child.statement, child_prefix, true); 
             };
-
             print_ast_list(list, new_prefix.clone(), true, true, print_if_statement); 
+        }
 
+        Node::WhileStatement { condition, statement } => {
+            print_ast(condition, new_prefix.clone(), false);
+            print_ast(statement, new_prefix, true); 
+        }
+
+        Node::DoWhileStatement { statement, condition } => {
+            print_ast(statement, new_prefix.clone(), false); 
+            print_ast(condition, new_prefix, true);
+        }
+
+        Node::ForStatement { init_statement, condition, iter_statement } => {
+           print_ast(init_statement, new_prefix.clone(), false);
+           print_ast(condition, new_prefix.clone(), false); 
+           print_ast(iter_statement, new_prefix, true); 
         }
 
         Node::Return { expression } => {
@@ -709,42 +745,105 @@ fn parse_struct_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena 
 //struct_or_union
 //	: STRUCT
 //	| UNION
-fn parse_struct_or_union_specifier<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<StructSpecifierNode<'arena>, CompilationError<'arena>> {
+fn parse_struct_or_union_specifier<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Specifier<'arena>, CompilationError<'arena>> {
 
-    let mut struct_node = StructSpecifierNode { is_union: false, name: None, declaration_list: None };
+    let is_union : bool;
 
     let mut cur_token = next_token(lexer)?;
     match cur_token {
-        Token::Struct => struct_node.is_union = false,
-        Token::Union => struct_node.is_union = true,
+        Token::Struct => is_union = false,
+        Token::Union => is_union = true,
         _ => return Err(CompilationError::UnexpectedToken(cur_token)),
     }
 
+    let mut name: Option<& str> = None;
     cur_token = next_token(lexer)?;
     if let Token::Identifier(id_name) = cur_token {
-        struct_node.name = Some(id_name);
+        name = Some(id_name);
 
         if let Token::LCurlyBracket = *peek_token(lexer)? { 
             cur_token = next_token(lexer)?;
         }
     }
 
+    let mut declaration_list : Option<&[&StructDeclarationNode]> = None;
     //struct_declaration_list
     //;	: struct_declaration
     //;	| struct_declaration_list struct_declaration
     if let Token::LCurlyBracket = cur_token {
         let declaration = parse_struct_declaration(lexer, arena)?;
-        let mut declaration_list = vec![declaration];
+        let mut list = vec![declaration];
         while let Ok(declaration) = parse_struct_declaration(lexer, arena) {
-            declaration_list.push(declaration);
+            list.push(declaration);
         }
 
-        struct_node.declaration_list = Some(arena.push_slice_copy(&declaration_list[..])?);
-
+        declaration_list = Some(arena.push_slice_copy(&list[..])?);
         expect_token(lexer, Token::RCurlyBracket)?;
     } 
 
-    return Ok(struct_node);
+    let specifier = arena.push(Specifier::Struct { is_union, name, declaration_list })?;
+    return Ok(specifier);
+}
+
+fn parse_enumerator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Enumerator<'arena>, CompilationError<'arena>>{
+    let mut enumerator : Enumerator = Enumerator { name: "", val: None };
+
+    let cur_token = next_token(lexer)?;
+    if let Token::Identifier(id_name) = cur_token {
+        enumerator.name = id_name;
+    } else {
+        return Err(CompilationError::UnexpectedToken(cur_token));
+    }
+
+    if let Token::Assign = peek_token(lexer)? {
+        next_token(lexer)?;
+        let const_expr = parse_expr(lexer, arena, 0)?;
+        enumerator.val = Some(eval_const_expression(const_expr)? as i32);
+    } else {
+        enumerator.val = None;
+    }
+
+    return Ok(arena.push(enumerator)?);
+}
+
+//enum_specifier
+//	: ENUM '{' enumerator_list '}'
+//	| ENUM IDENTIFIER '{' enumerator_list '}'
+//	| ENUM IDENTIFIER
+fn parse_enum_specifier<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Specifier<'arena>, CompilationError<'arena>>{
+    expect_token(lexer, Token::Enum)?;
+
+    let mut name: Option<& str> = None;
+    
+    let mut cur_token = next_token(lexer)?;
+    if let Token::Identifier(id_name) = cur_token {
+        name = Some(id_name);
+
+        if let Token::LCurlyBracket = *peek_token(lexer)? { 
+            cur_token = next_token(lexer)?;
+        }
+    }
+ 
+    //enumerator_list
+    //	: enumerator
+    //	| enumerator_list ',' enumerator
+    if let Token::LCurlyBracket = cur_token {
+        let enumerator = parse_enumerator(lexer, arena)?;
+        let mut enumerator_list = vec![enumerator];
+        
+        while let Token::Comma = peek_token(lexer)? {
+            next_token(lexer)?;
+            enumerator_list.push(parse_enumerator(lexer, arena)?);
+        }
+        expect_token(lexer, Token::RCurlyBracket)?;
+
+        let enumerator_list = Some(arena.push_slice_copy(&enumerator_list[..])?);
+        let specifier = Specifier::Enum { name, enumerator_list };
+        return Ok(arena.push(specifier)?);
+    } else {
+        let specifier = Specifier::Enum { name, enumerator_list : None };
+        return Ok(arena.push(specifier)?);
+    }
 }
 
 //type_specifier
@@ -772,10 +871,13 @@ fn parse_type_specifier<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'
         }
 
         Token::Struct | Token::Union => {
-            let struct_specifier = parse_struct_or_union_specifier(lexer, arena)?;
-            let type_specifier = Specifier::Struct(struct_specifier);
-            return Ok(arena.push(type_specifier)?);
+            return parse_struct_or_union_specifier(lexer, arena);
         }
+
+        Token::Enum => {
+            return parse_enum_specifier(lexer, arena);
+        }
+
         _ => {
             // Handle user defined types
             return Err(CompilationError::UnexpectedToken(*cur_token));
@@ -1100,6 +1202,19 @@ fn parse_declaration_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : 
 }
 
 
+pub fn parse_expr_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
+    match peek_token(lexer)? {
+        Token::Semicolon => {
+            next_token(lexer)?;
+            return Ok(arena.push(Node::Empty)?);
+        }
+        _ => {
+            let expr = parse_expr(lexer, arena, 0)?;
+            expect_token(lexer, Token::Semicolon)?;
+            return Ok(expr);
+        }
+    }
+}
 //statement
 //	: labeled_statement
 //	| compound_statement
@@ -1216,23 +1331,59 @@ pub fn parse_statement<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'a
 
         }*/
 
+        //iteration_statement
+        //	: WHILE '(' expression ')' statement
+        //	| DO statement WHILE '(' expression ')' ';'
+        //	| FOR '(' expression_statement expression_statement ')' statement
+        //	| FOR '(' expression_statement expression_statement expression ')' statement
+        //	;
 
+        Token::While => {
+            next_token(lexer)?;
+            expect_token(lexer, Token::LParen)?;
+            let condition = parse_expr(lexer, arena, 0)?;
+
+            expect_token(lexer, Token::RParen)?;
+            let statement = parse_statement(lexer, arena)?;
+            let node = Node::WhileStatement { condition, statement };
+            return Ok(arena.push(node)?);
+        }
+
+        Token::Do => {
+            next_token(lexer)?;
+            let statement = parse_statement(lexer, arena)?;
+
+            expect_token(lexer, Token::While)?;
+            expect_token(lexer, Token::LParen)?;
+            let condition = parse_expr(lexer, arena, 0)?;
+            expect_token(lexer, Token::RParen)?;
+            expect_token(lexer, Token::Semicolon)?;
+            
+            let node = Node::DoWhileStatement { condition, statement };
+            return Ok(arena.push(node)?);
+        }
+
+        Token::For => {
+            next_token(lexer)?;
+            expect_token(lexer, Token::LParen)?;
+            let init_statement = parse_expr_statement(lexer, arena)?;
+            let condition = parse_expr_statement(lexer, arena)?;
+            let iter_statement = if let Ok(expr) = parse_expr(lexer, arena, 0) {
+                expr
+            } else {
+                arena.push(Node::Empty)?
+            };
+            expect_token(lexer, Token::RParen)?;
+
+            let node = Node::ForStatement { init_statement, condition, iter_statement };
+            return Ok(arena.push(node)?);
+        }
 
         Token::LCurlyBracket => return parse_compound_statement(lexer, arena),
-        //expression_statement
-        //    : ';'
-        //    | expression ';'
-        //    ;
-        Token::Semicolon => {
-            next_token(lexer);
-            return Ok(arena.push(Node::Empty)?);
-        }
 
         _ => {
             // No applicable keywords encountered, try parsing expression
-            let expression = parse_expr(lexer, arena, 0)?;
-            expect_token(lexer, Token::Semicolon)?;
-            return Ok(expression);
+            return parse_expr_statement(lexer, arena);
         }
     }
 }
