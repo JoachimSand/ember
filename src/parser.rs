@@ -1,7 +1,8 @@
 use std::fmt::Formatter;
 use std::{iter::Peekable, fmt, error::Error};
-use crate::lexer::*;
+use crate::{lexer::*, b_red};
 use crate::arena::*;
+use crate::colours::*;
 use crate::compile::CompilationError;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -83,7 +84,7 @@ pub enum Node<'n> {
     DoWhileStatement{ statement : &'n Node<'n>, condition : &'n Node<'n>},
     ForStatement{ init_statement : &'n Node<'n>, condition : &'n Node<'n>, iter_statement: &'n Node<'n>},
 
-    FunctionCall{ function_name : &'n Node<'n>, arguments : &'n Node<'n>},
+    FunctionCall{ function : &'n Node<'n>, arguments : &'n [&'n Node<'n>]},
     ArrayIndex{ lvalue : &'n Node<'n>, index : &'n Node<'n>},
     
     Infix{ operator : Token<'n>, left : &'n Node<'n>, right : &'n Node<'n> },
@@ -101,7 +102,7 @@ impl<'n> fmt::Display for Specifier<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
         match self {
             Specifier::StorageClass(token) | Specifier::TypeQualifier(token) | Specifier::BasicType(token) => {
-                write!(f, "{:?}", token)
+                write!(f, "\x1b[1;34m{:?}\x1b[0m", token)
             }
 
             Specifier::Struct{ is_union, name, ..} => {
@@ -139,7 +140,7 @@ impl<'n> fmt::Display for StructDeclarationNode<'n> {
 
 impl<'n> fmt::Display for Enumerator<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "Enumerator {:?}", self.name)?;
+        write!(f, "{} {:?}", red!("Enumerator"), self.name)?;
         if let Some(val) = self.val {
             write!(f, ", val: {}", val)
         } else {
@@ -195,46 +196,57 @@ impl<'n> fmt::Display for DeclaratorNode<'n> {
 
 impl<'n> fmt::Display for InitDeclaratorNode<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "Init Declarator")
+        write!(f, "{}", "Init Declarator")
     }
 }
 
 impl<'n> fmt::Display for IfNode<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "If Statement")
+        write!(f, "{}", red!("If Statement"))
     }
 }
 
 impl<'n> fmt::Display for Node<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Node::TranslationalUnit{..} => write!(f, "Translational Unit"),
-            Node::FunctionDefinition{..} => write!(f, "Function Definition"),
-            Node::CompoundStatement{..} => write!(f, "Compound Statement"),
-            Node::DeclarationList(_) => write!(f, "Declaration List"),
-            Node::StatementList(_) => write!(f, "Statement List"),
+            Node::TranslationalUnit{..} => write!(f, "{}", yellow!("Translational Unit")),
+            Node::FunctionDefinition{..} => write!(f, "{}", yellow!("Function Definition")),
+            Node::CompoundStatement{..} => write!(f, "{}", ("Compound Statement")),
+            Node::DeclarationList(_) => write!(f, "{}", cyan!("Declaration List ")),
+            Node::StatementList(_) => write!(f, "{}", red!("Statement List")),
         
-            Node::Declaration{..} => write!(f, "Declaration"),
+            Node::Declaration{..} => write!(f, "{}", cyan!("Declaration")),
             Node::InitDeclaratorList(_) => write!(f, "Init Declarator List"),
             Node::InitDeclarator(node) => write!(f, "{}", node),
             Node::InitializerList(_) => write!(f, "Initializer List"),
             
-            Node::IfStatementList(_) => write!(f, "If Statement List"),
-            Node::WhileStatement {..} => write!(f, "While Statement"),
-            Node::DoWhileStatement{..} => write!(f, "Do While Statement"),
-            Node::ForStatement{..} => write!(f, "For Statement"),
-            /*
-            Node::ArrayIndex(_) => write!(f, "Array Index"),
-            Node::FunctionCall(_) => write!(f, "Function Call"),
-            */
-            Node::Return { .. } => write!(f, "Return"),  
+            Node::IfStatementList(_) => write!(f, "{}", red!("If Statement List")),
+            Node::WhileStatement {..} => write!(f, "{}", red!("While Statement")),
+            Node::DoWhileStatement{..} => write!(f, "{}", red!("Do While Statement")),
+            Node::ForStatement{..} => write!(f, "{}", red!("For Statement")),
+            
+            Node::ArrayIndex{..} => write!(f, "Array Index"),
+            Node::FunctionCall{..} => write!(f, "Function Call"),
+            
+            Node::Return { .. } => write!(f, "{}", red!("Return")),  
             Node::Infix{operator, ..} => write!(f, "I{:?}", operator),
             Node::Prefix(n) => write!(f, "Prefix {:?}", n.operator),
             Node::Postfix(n) => write!(f, "Postfix {:?}", n.operator),
-            Node::Literal(t) => write!(f, "{:?}", t),
-            Node::Identifier{name} => write!(f, "{}", name),
+            Node::Literal(t) => {
+                
+                write!(f, "\x1b[1;35m")?;
+                match t {
+                    Token::IntegerLiteral(val) => write!(f, "{}", val)?, 
+                    Token::DoubleLiteral(val) => write!(f, "{}", val)?,
+                    Token::FloatLiteral(val) => write!(f, "{}", val)?,
+                    Token::StringLiteral(val) => write!(f, "{}", val)?,
+                    _ => ()
+                }
+                write!(f, "\x1b[0m")
+            }
+            Node::Identifier{name} => write!(f, "\x1b[1;90m{}\x1b[0m", name),
 
-            Node::Empty => write!(f, "Empty"),
+            Node::Empty => write!(f, "{}", b_black!("Empty")),
             _ => write!(f, "Unknown Node"),
 
         }
@@ -376,6 +388,16 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
            print_ast(iter_statement, new_prefix, true); 
         }
 
+        Node::FunctionCall { function, arguments } => {
+            print_ast(function, new_prefix.clone(), false);
+            print_ast_list(arguments, new_prefix.clone(), true, false, |child, list_prefix, is_last| print_ast(child, list_prefix, is_last));
+        }
+
+        Node::ArrayIndex { lvalue, index } => {
+            print_ast(lvalue, new_prefix.clone(), false);
+            print_ast(index, new_prefix, true);
+        }
+
         Node::Return { expression } => {
             print_ast(expression, new_prefix, true);
         }
@@ -393,11 +415,6 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
         Node::Postfix(node) => {
             print_ast(node.operand, new_prefix, true);
         }
-        /*
-        Node::ArrayIndex(node) => {
-            print_ast(node.lvalue, new_prefix.clone(), false);
-            print_ast(node.index, new_prefix, true);
-        }*/
 
         Node::Declaration{ declaration_specifiers, init_declarator_list} => {
             print_ast_specifiers(declaration_specifiers, new_prefix.clone(), false);
@@ -521,7 +538,6 @@ pub fn parse_primary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'are
             return Ok(expr);
         }
 
-        //TODO: String literal
         _ => return Err(CompilationError::UnexpectedToken(cur_token)),
     }  
 }
@@ -558,9 +574,22 @@ fn parse_postfix<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena A
             Token::LParen => { // Function Call
                 next_token(lexer)?;
                 // TODO: Parse argument expressions
-
-                expect_token(lexer, Token::RParen)?;
-                let new_primary = Node::FunctionCall{ function_name : primary, arguments : arena.push(Node::Empty)? };
+                
+                let arguments : &[&Node];
+                if let Token::RParen = peek_token(lexer)? {
+                    next_token(lexer)?;
+                    arguments = arena.push_slice_copy(&[])?;
+                } else {
+                    let mut argument_list = vec![parse_expr(lexer, arena, 0)?];
+                    while let Token::Comma = peek_token(lexer)? {
+                        next_token(lexer)?;
+                        argument_list.push(parse_expr(lexer, arena, 0)?);
+                    }
+                    arguments = arena.push_slice_copy(&argument_list[..])?;
+                    expect_token(lexer, Token::RParen)?;
+                }
+                
+                let new_primary = Node::FunctionCall{ function : primary, arguments };
                 primary = arena.push(new_primary)?;
             }
 
@@ -574,8 +603,6 @@ fn parse_postfix<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena A
             _ => return Ok(primary),
         }
     }
-
-    // TODO: We need to loop postfix operators here.
 }
 
 // unary_expression
@@ -890,8 +917,6 @@ fn parse_type_specifier<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'
 //	| type_specifier
 //	| type_qualifier specifier_qualifier_list
 //	| type_qualifier
-
-// TODO: This is very similar in structure to parsing declaration_specifiers. Might be worth combining the two 
 fn parse_specifier_qualifier_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'arena Arena) -> Result<&'arena SpecifierList<'arena>, CompilationError<'arena>> {
     parse_declaration_specifiers(lexer, arena, false)
 }
@@ -1025,7 +1050,7 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
     loop {
         match peek_token(lexer)? {
             Token::LParen => { // function declaration
-                next_token(lexer);
+                next_token(lexer)?;
 
                 // TODO: Implement parameter_type_list and identifier_list
                 expect_token(lexer, Token::RParen).map_err(|_| CompilationError::NotImplemented)?;
@@ -1033,9 +1058,9 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
                 
             }
             Token::LBracket => {
-                next_token(lexer);
+                next_token(lexer)?;
                 if let Token::RBracket = peek_token(lexer)? {
-                    next_token(lexer);
+                    next_token(lexer)?;
                     derived_types.push(DerivedType::Array{ size : None});
                 } else {
                     let constant_expression = parse_expr(lexer, arena, 0)?;

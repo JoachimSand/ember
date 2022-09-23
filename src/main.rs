@@ -6,10 +6,12 @@ use std::fmt;
 
 mod lexer;
 mod parser;
+mod colours;
 mod typechecker;
 mod arena;
 mod compile;
 mod codegen;
+
 
 use compile::*;
 
