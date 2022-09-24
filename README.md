@@ -13,6 +13,9 @@ In order to minimize allocation overhead, Ember uses a small memory arena for al
 
 - Extensive visualisation of generated ASTs with a canonical representation for all types (even the really gnarly looking function pointers!).
 
+    ![print_example](https://user-images.githubusercontent.com/37040245/192108603-6ff136b4-09e3-4125-89e5-786898459033.png)
+
+
 ### Building
 
 Since Ember is written in Rust, you will need an installation of Rust to compile it. Ember is known to compile with Rust 1.59 (Stable) or newer. Compatibility with older versions of Rust will be check in the near future.
