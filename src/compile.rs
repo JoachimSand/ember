@@ -1,8 +1,9 @@
-use std::{iter::Peekable, fmt, error::Error};
+use std::{fmt, error::Error};
 use crate::lexer::*;
 use crate::parser::*;
+use crate::pretty_print::*;
 use crate::arena::*;
-use crate::typechecker::*;
+//use crate::typechecker::*;
 use crate::codegen::*;
 
 // Global Error type for the whole compiler.
@@ -42,7 +43,7 @@ pub fn parse_only(input : &str){
     let lexer = &mut Lexer::new(&input, &arena).peekable();
     match parse_translational_unit(lexer, arena) {
         Ok(node) => {
-            println!("{:?}", node);
+            //println!("{:?}", node);
             print_ast(node, "".to_string(), true);
         }
         Err(e) => println!("{e}"),

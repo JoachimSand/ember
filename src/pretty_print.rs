@@ -1,5 +1,4 @@
-use std::fmt::Formatter;
-use std::{iter::Peekable, fmt, error::Error};
+use std::fmt;
 
 use crate::parser::*;
 use crate::lexer::*;
@@ -64,7 +63,7 @@ impl<'n> fmt::Display for SpecifierList<'n> {
 impl<'n> fmt::Display for DeclaratorNode<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
         
-        write!(f, "Declarator {}", self.name)?;
+        write!(f, "{} {}", green!("Declarator"), self.name)?;
 
         if self.derived_types.len() > 0 {
             write!(f, ", ")?;
@@ -83,14 +82,14 @@ impl<'n> fmt::Display for DeclaratorNode<'n> {
                         write!(f, "v")?;
                     }
 
-                    write!(f, "* ")?;
+                    write!(f, "{}", green!("* "))?;
                 }
-                DerivedType::FunctionParameterless => write!(f, "() ")?,
+                DerivedType::FunctionParameterless => write!(f, "{}", green!("() "))?,
                 DerivedType::Array { size }=> { 
                     if let Some(size) = size {
-                        write!(f, "[{}] ", size)?;
+                        write!(f, "{}{}{} ", green!("["), size, green!("]"))?;
                     } else {
-                        write!(f, "[] ")?;
+                        write!(f, "{}", green!("[] "))?;
                     }
                 }
                 _ => write!(f, "Unimplemented")?,
@@ -271,7 +270,7 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
 
         Node::IfStatementList(list) => {
 
-            let print_if_statement = |child : &&IfNode, child_prefix : String, is_last : bool | {
+            let print_if_statement = |child : &&IfNode, child_prefix : String, _ : bool | {
                 print_ast(child.condition, child_prefix.clone(), false);
                 print_ast(child.statement, child_prefix, true); 
             };
@@ -487,3 +486,11 @@ macro_rules! colour {
         ret
     }}
 }
+
+#[allow(unused_imports)]
+pub(crate) use {
+    black, red, green, yellow, blue, magenta, cyan, white, default, 
+    b_black, b_red, b_green, b_yellow, b_blue, b_magenta, b_cyan,
+    d_white, 
+    colour
+};

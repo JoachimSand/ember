@@ -1,28 +1,26 @@
-use std::fmt::Formatter;
-use std::{iter::Peekable, fmt, error::Error};
-use crate::{lexer::*, b_red};
+use std::iter::Peekable;
+use crate::lexer::*;
 use crate::arena::*;
-use crate::colours::*;
 use crate::compile::CompilationError;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UnaryNode<'n> {
-    operator : Token<'n>,
-    operand : &'n Node<'n>,
+    pub operator : Token<'n>,
+    pub operand : &'n Node<'n>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DerivedType<'n> {
     Pointer{ is_const : bool, is_volatile : bool },
     Array { size : Option<i64> },
-    Function { parameter_list : &'n Node<'n> },
+    _Function { parameter_list : &'n Node<'n> },
     FunctionParameterless,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Enumerator<'n> {
-    name : &'n str,
-    val : Option<i32>,
+    pub name : &'n str,
+    pub val : Option<i32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -206,7 +204,7 @@ pub fn parse_primary<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &'are
 
         Token::LParen => {
             let expr = parse_expr(lexer, arena, 0)?;
-            expect_token(lexer, Token::RParen)?; 
+            expect_token(lexer, Token::RParen)?;
             return Ok(expr);
         }
 
@@ -814,7 +812,7 @@ fn parse_init_declarator<'arena>(lexer : &mut Peekable<Lexer<'arena>>, arena : &
     let declarator = parse_declarator(lexer, arena)?;
     match peek_token(lexer)? {
         Token::Assign => {
-            next_token(lexer);
+            next_token(lexer)?;
             let initializer = parse_initializer(lexer, arena)?;
             let init_declarator = InitDeclaratorNode{ declarator, initializer};
             return Ok(arena.push(init_declarator)?);
@@ -836,7 +834,7 @@ fn parse_init_declarator_list<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
     let init_declarator = parse_init_declarator(lexer, arena)?;
     let mut list = vec![init_declarator];
     while let Token::Comma = *peek_token(lexer)? {
-        next_token(lexer);
+        next_token(lexer)?;
         list.push(parse_init_declarator(lexer, arena)?);
     }
 
@@ -1177,7 +1175,7 @@ fn parse_external_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
     match peek_token {
         Token::Semicolon => {
             // Semicolon encountered - this external declaration must be a declaration.
-            next_token(lexer);
+            next_token(lexer)?;
             return Ok(declaration);
         }
 
@@ -1194,7 +1192,7 @@ fn parse_external_declaration<'arena>(lexer : &mut Peekable<Lexer<'arena>>, aren
                 if let Node::InitDeclarator(init_node) = *init_declarator_list {
                     let first_type = init_node.declarator.derived_types.last().ok_or(CompilationError::UnableToDecomposeDeclaration)?;
                     match first_type {
-                        DerivedType::Function{ .. } | DerivedType::FunctionParameterless => func_declarator = init_node.declarator,
+                        DerivedType::_Function{ .. } | DerivedType::FunctionParameterless => func_declarator = init_node.declarator,
                         _ => return Err(CompilationError::UnableToDecomposeDeclaration),
                     }
                 } else {

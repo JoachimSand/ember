@@ -1,3 +1,4 @@
+/*
 use std::collections::HashMap;
 use std::fmt;
 
@@ -5,7 +6,6 @@ use crate::compile::CompilationError;
 use crate::lexer::*;
 use crate::parser::*;
 
-/*
 // See https://blog.robertelder.org/building-a-c-compiler-type-system-a-canonical-type-representation/ 
 pub struct Type<'t>{
     // e.g. int, long, const volatile etc.

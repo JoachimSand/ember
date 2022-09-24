@@ -3,7 +3,6 @@ use std::cell::UnsafeCell;
 use std::ptr;
 use std::slice;
 use std::str;
-use std::fmt::Debug;
 
 use crate::compile::CompilationError;
 

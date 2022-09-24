@@ -144,7 +144,7 @@ impl <'input> Iterator for Lexer <'input> {
     fn next(&mut self) -> Option<Self::Item> {    
 
         let token = self.advance_tokens();
-        println!("{:?}", token);
+        //println!("{:?}", token);
         return token;
     }
 }

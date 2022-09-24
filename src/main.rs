@@ -6,7 +6,7 @@ use std::fmt;
 
 mod lexer;
 mod parser;
-mod colours;
+mod pretty_print;
 mod typechecker;
 mod arena;
 mod compile;
@@ -50,7 +50,7 @@ impl fmt::Display for MainError {
 
 fn main() -> Result<(), MainError>{
     let args : Vec<String> = env::args().collect();
-    println!("Recieved args: {:?}", args);
+    //println!("Recieved args: {:?}", args);
     
     if args.len() == 1 {
         // No arguments provided, default to repl compiling
