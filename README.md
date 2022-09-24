@@ -3,15 +3,19 @@
 Ember is a work-in-progress C90 compiler written in Rust. 
 
 ### Features
-- Zero dependencies.
+- **Zero dependencies.**
 
-- Hand-written lexer and parser.  
+- **Hand-written lexer and parser.**  
+
 Ember uses a hand-written recursive descent parser for parsing most of the C90 grammar. However, for efficiency expressions are parsed with precedence climbing instead.
 
-- Runtime allocations with a custom-built memory arena module.  
+- **Runtime allocations with a custom-built memory arena module.**  
+
 In order to minimize allocation overhead, Ember uses a small memory arena for allocating the generated AST. By tying the lifetime of every AST node to the arena, this also avoids the usual pitfalls of dealing with trees in Rust.
 
-- Extensive visualisation of generated ASTs with a canonical representation for all types (even the really gnarly looking function pointers!).  
+- **Extensive visualisation of generated ASTs.**
+
+Ember can visualize its internal AST as a printable tree. The visualization has a canonical representation for all types (even the really gnarly looking function pointers!).  
 
 Take the following example:
 ```C
@@ -25,10 +29,10 @@ int main(){
         a = 8;
 }
 ```
-Ember can visualize this as:
+Ember can visualize this as:  
 
 
-    ![print_example](https://user-images.githubusercontent.com/37040245/192108603-6ff136b4-09e3-4125-89e5-786898459033.png)
+![print_example](https://user-images.githubusercontent.com/37040245/192108603-6ff136b4-09e3-4125-89e5-786898459033.png)
 
 ### Building
 
