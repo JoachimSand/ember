@@ -34,6 +34,8 @@ Ember can visualize this as:
 
 ![print_example](https://user-images.githubusercontent.com/37040245/192108603-6ff136b4-09e3-4125-89e5-786898459033.png)
 
+Note that the declarator for `fp_arr` is `[3] [9] * [15] * ()`. This can easily be understood as fp_array is "an array with length `[3]` of array with length `[9]` of pointers (`*`) to an array with length `[15]` of functions with no arguments (`()`) returning `int`."
+
 ### Building
 
 Since Ember is written in Rust, you will need an installation of Rust to compile it. Ember is known to compile with Rust 1.59 (Stable) or newer. Compatibility with older versions of Rust will be check in the near future.
