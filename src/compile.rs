@@ -31,13 +31,24 @@ impl <'e> Error for CompilationError<'e> {}
 
 impl <'e> fmt::Display for CompilationError<'e> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "Compilation Error: {:?}", self)
+        use CompilationError::*;
+        let err_str = match self {
+            InsufficientSpace       => "Memory Arena ran out of space.".to_string(),
+            NotImplemented          => "Error caused by feature not yet implemented.".to_string(),
+            UnimplVerbose(msg)      => format!("Error caused by unimplemented feature {msg}"),
+            EarlyLexerTermination   => format!("Lexer terminated early."),
+            UnknownPrecedence(t)    => format!("Token {t:?} does not have any precedence associated with it"),
+            _ => return write!(f, "Compilation Error: {:?}", self)  
+        };
+
+        write!(f, "Compilation Error: {err_str}")
     }
 }
 
 // Don't compile - only parse the input
 // and produce a legible AST.
 pub fn parse_only(input : &str){
+    println!("{input}");
     let arena = &mut Arena::new(20000);
 
     let lexer = &mut Lexer::new(&input, &arena).peekable();

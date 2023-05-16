@@ -110,8 +110,8 @@ impl<'b> BasicBlock<'b> {
 fn codegen_expr<'s, 'n : 's, 'i : 's>(scope_stack : &'s mut RegScopeStack<'n>, dest_reg : VarReg<'n>, instructions : &'i mut Vec<Instruction<'n>>, expr : &'n Node<'n>) -> Result<(), CompilationError<'n>>{
     match expr {
         Node::Literal(lit) => {
-            if let Token::IntegerLiteral(val) = lit {
-                let instr = Instruction::AddImm{ dst : dest_reg, r1 : Reg::Zero, imm : *val as i32};
+            if let TokenType::IntegerLiteral(val) = lit.token_type {
+                let instr = Instruction::AddImm{ dst : dest_reg, r1 : Reg::Zero, imm : val as i32};
                 instructions.push(instr);
                 return Ok(())
             } else {
@@ -126,14 +126,14 @@ fn codegen_expr<'s, 'n : 's, 'i : 's>(scope_stack : &'s mut RegScopeStack<'n>, d
             let right_dest = get_temp_reg(scope_stack);
             codegen_expr(scope_stack, right_dest, instructions, right)?;
 
-            match operator {
-                Token::Plus => {
+            match operator.token_type {
+                TokenType::Plus => {
                     let instr = Instruction::Add { dst: dest_reg, r1: Reg::Var(left_dest), r2: Reg::Var(right_dest) };
                     instructions.push(instr);
                 }
 
-                Token::Minus | Token::Asterisk | Token::Div | Token::Mod | Token::OR | Token::Ampersand | Token::XOR | 
-                Token::ORLogical | Token::ANDLogical | Token::LeftShift | Token::RightShift 
+                TokenType::Minus | TokenType::Asterisk | TokenType::Div | TokenType::Mod | TokenType::OR | TokenType::Ampersand | TokenType::XOR | 
+                TokenType::ORLogical | TokenType::ANDLogical | TokenType::LeftShift | TokenType::RightShift 
                     => return Err(CompilationError::UnimplVerbose(format!("Codegen for infix {:?}", operator))),
 
                 _ => return Err(CompilationError::InvalidASTStructure),
@@ -178,8 +178,8 @@ fn codegen_compound_stmt<'s, 'n : 's>(scope_stack : &'s mut RegScopeStack<'n>, c
             for statement in *list {
                 match statement {
                     Node::Infix { operator, left, right } => {
-                        match operator {
-                            Token::Assign => {
+                        match operator.token_type {
+                            TokenType::Assign => {
                                 match left {
                                     Node::Identifier { name } => {
                                         let reg = step_var_reg(scope_stack, name);
@@ -191,8 +191,8 @@ fn codegen_compound_stmt<'s, 'n : 's>(scope_stack : &'s mut RegScopeStack<'n>, c
                                 }
                             }
 
-                            Token::PlusAssign | Token::MinusAssign | Token::MultAssign | Token::DivAssign |
-                            Token::ModAssign |  Token::ANDAssign | Token::ORAssign | Token::XORAssign => {
+                            TokenType::PlusAssign | TokenType::MinusAssign | TokenType::MultAssign | TokenType::DivAssign |
+                            TokenType::ModAssign |  TokenType::ANDAssign | TokenType::ORAssign | TokenType::XORAssign => {
                                 return Err(CompilationError::UnimplVerbose("Codegen for extra Assignments".to_string()));
                             }
 

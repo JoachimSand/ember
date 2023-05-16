@@ -7,7 +7,7 @@ impl<'n> fmt::Display for Specifier<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
         match self {
             Specifier::StorageClass(token) | Specifier::TypeQualifier(token) | Specifier::BasicType(token) => {
-                write!(f, "\x1b[1;34m{:?}\x1b[0m", token)
+                write!(f, "\x1b[1;34m{:?}\x1b[0m", token.token_type)
             }
 
             Specifier::Struct{ is_union, name, ..} => {
@@ -134,17 +134,17 @@ impl<'n> fmt::Display for Node<'n> {
             Node::FunctionCall{..} => write!(f, "Function Call"),
             
             Node::Return { .. } => write!(f, "{}", red!("Return")),  
-            Node::Infix{operator, ..} => write!(f, "I{:?}", operator),
-            Node::Prefix(n) => write!(f, "Prefix {:?}", n.operator),
-            Node::Postfix(n) => write!(f, "Postfix {:?}", n.operator),
+            Node::Infix{operator, ..} => write!(f, "I{:?}", operator.token_type),
+            Node::Prefix(n) => write!(f, "Prefix {:?}", n.operator.token_type),
+            Node::Postfix(n) => write!(f, "Postfix {:?}", n.operator.token_type),
             Node::Literal(t) => {
                 
                 write!(f, "\x1b[1;35m")?;
-                match t {
-                    Token::IntegerLiteral(val) => write!(f, "{}", val)?, 
-                    Token::DoubleLiteral(val) => write!(f, "{}", val)?,
-                    Token::FloatLiteral(val) => write!(f, "{}", val)?,
-                    Token::StringLiteral(val) => write!(f, "{}", val)?,
+                match t.token_type {
+                    TokenType::IntegerLiteral(val) => write!(f, "{}", val)?, 
+                    TokenType::DoubleLiteral(val) => write!(f, "{}", val)?,
+                    TokenType::FloatLiteral(val) => write!(f, "{}", val)?,
+                    TokenType::StringLiteral(val) => write!(f, "{}", val)?,
                     _ => ()
                 }
                 write!(f, "\x1b[0m")

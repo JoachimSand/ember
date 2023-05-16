@@ -3,8 +3,22 @@ use std::str::Chars;
 
 use crate::arena::*;
 
+
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Token<'t> {
+pub struct Token<'t> {
+    pos : Pos,
+    pub token_type : TokenType<'t>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Pos {
+    start_col : usize,
+    end_col : usize,
+    line_num : usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TokenType<'t> {
     Identifier(&'t str),
 
     IntegerLiteral(i64),
@@ -107,18 +121,18 @@ pub enum Token<'t> {
 #[macro_export]
 macro_rules! lex_operand {
     (
-        chars = $c:expr,
+        lexer = $c:expr,
         fallback => $f:expr,
         $(
             $s:pat => $t:expr  
         ),*
     ) => {{  
-        match $c.peek() {
+        match $c.peek_char() {
             Some(c) => {
                 match *c {
                     $(
                         $s => {
-                            $c.next();
+                            $c.next_char();
                             $t;
                         }    
                     )*
@@ -133,9 +147,18 @@ macro_rules! lex_operand {
 }
 
 pub struct Lexer<'input> {
+    input : &'input str,
     char_stream : Peekable<Chars<'input>>,
-    arena : &'input Arena
+    arena : &'input Arena,
+
+    // references to lines in input
+    lines : Vec<&'input str>,
+    // absolute position of last character lexed
+    char_pos : usize,           
+    // absolute pos of where the line currently being lexed starts 
+    cur_line_start : usize,     
 }
+
 
 impl <'input> Iterator for Lexer <'input> { 
    
@@ -143,30 +166,86 @@ impl <'input> Iterator for Lexer <'input> {
 
     fn next(&mut self) -> Option<Self::Item> {    
 
-        let token = self.advance_tokens();
-        //println!("{:?}", token);
-        return token;
-    }
-}
-
-impl <'input> Lexer<'input> {
-    pub fn new(contents : &'input str, arena : &'input Arena) -> Self {
-        Lexer { 
-            char_stream : contents.chars().peekable(), 
-            arena
-        }
-    }
-
-    fn advance_tokens(&mut self) -> Option<Token<'input>> {    
-        let mut first_char : char;
-        
+        // get rid of white space and comments first
         loop {
-            first_char = self.char_stream.next()?;
+            let mut c = *self.peek_char()?;
 
-            if first_char.is_whitespace() == false {
+            if c.is_whitespace() {
+                c = self.next_char()?;
+            } else if c == '/' {
+                self.next_char();
+                match self.peek_char()? {
+                    '/' => {
+                        // Handle one-line comments!
+                        while self.next_char()? != '\n' {}
+                    },
+                    '*' => {
+                        // Handle multi-line comments!
+                        loop {
+                            let c = self.char_stream.next()?;
+
+                            if c == '*' && *self.char_stream.peek()? == '/' {
+                                self.char_stream.next();
+                                break;
+                            }
+                        }
+                    }
+                    _ => break,
+                }
+            } else {
                 break;
             }
         }
+
+        
+        // track position before and after lexing token.
+        // This can be used to track the size and pos of the token
+        let line_num = self.lines.len();
+        let start_col = self.char_pos - self.cur_line_start;
+
+        let token_type = self.next_token_type()?;
+        let pos = Pos { start_col, line_num, end_col : self.char_pos};
+
+        let token = Token { pos, token_type};
+        println!("{token:?}");
+        Some(token)
+    }
+}
+
+
+
+impl <'input> Lexer<'input> {
+    pub fn new(input : &'input str, arena : &'input Arena) -> Self {
+        Lexer {
+            input, char_stream : input.chars().peekable(), arena,
+            lines : Vec::new(), cur_line_start : 0, char_pos : 0
+        }
+    }
+
+    fn peek_char(&mut self) -> Option<&char> {
+        self.char_stream.peek()
+    }
+
+    fn next_char(&mut self) -> Option<char>{
+        let c = self.char_stream.next()?;
+        self.char_pos += 1;
+
+        if c == '\n' {
+            self.lines.push(&self.input[self.cur_line_start..self.char_pos - 1]);
+            println!("Line {}", self.lines.last().unwrap());
+            self.cur_line_start = self.char_pos;
+        }
+
+        Some(c)
+    }
+
+    fn generate_error(pos : Pos, msg : &str) {
+
+    }
+
+
+    fn next_token_type(&mut self) -> Option<TokenType<'input>> {    
+        let mut first_char = self.next_char()?;
 
         match first_char {
             'a'..='z' | 'A'..='Z' | '_' => {
@@ -176,19 +255,13 @@ impl <'input> Lexer<'input> {
                 // Attempt to parse identifier
                 identifier_string.push(first_char);
 
-                loop {
-
+                while let Some(c) = self.peek_char() {
                     // Only consume iterator if next char can be added to current token
-                    match self.char_stream.peek() {
-                        Some(c) => {
-                            if c.is_ascii_alphanumeric() || *c == '_' {
-                                identifier_string.push(*c);
-                                self.char_stream.next();
-                            } else {
-                                break;
-                            }
-                        },
-                        None => break, 
+                    if c.is_ascii_alphanumeric() || *c == '_' {
+                        identifier_string.push(*c);
+                        self.next_char();
+                    } else {
+                        break;
                     }
                 }
                 
@@ -197,46 +270,46 @@ impl <'input> Lexer<'input> {
 
                     // TODO: Remove this unwrap when capability of mem arena has been improved
                     let identifier = self.arena.push_str(identifier_string.as_str()).unwrap();
-                    return Some(Token::Identifier(identifier));
+                    return Some(TokenType::Identifier(identifier));
                 }
 
                 match identifier_string.as_str() {
-                    "auto" => return Some(Token::Auto),
-                    "break" => return Some(Token::Break),
-                    "case" => return Some(Token::Case),
-                    "char" => return Some(Token::Char),
-                    "const" => return Some(Token::Const),
-                    "continue" => return Some(Token::Continue),
-                    "default" => return Some(Token::Default),
-                    "do" => return Some(Token::Do),
-                    "double" => return Some(Token::Double),
-                    "else" => return Some(Token::Else),
-                    "enum" => return Some(Token::Enum),
-                    "extern" => return Some(Token::Extern),
-                    "float" => return Some(Token::Float),
-                    "for" => return Some(Token::For),
-                    "goto" => return Some(Token::Goto),
-                    "if" => return Some(Token::If),
-                    "int" => return Some(Token::Int),
-                    "long" => return Some(Token::Long),
-                    "register" => return Some(Token::Register),
-                    "return" => return Some(Token::Return),
-                    "short" => return Some(Token::Short),
-                    "signed" => return Some(Token::Signed),
-                    "sizeof" => return Some(Token::Sizeof),
-                    "static" => return Some(Token::Static),
-                    "struct" => return Some(Token::Struct),
-                    "switch" => return Some(Token::Switch),
-                    "typedef" => return Some(Token::Typedef),
-                    "union" => return Some(Token::Union),
-                    "unsigned" => return Some(Token::Unsigned),
-                    "void" => return Some(Token::Void),
-                    "volatile" => return Some(Token::Volatile),
-                    "while" => return Some(Token::While),
+                    "auto" => return Some(TokenType::Auto),
+                    "break" => return Some(TokenType::Break),
+                    "case" => return Some(TokenType::Case),
+                    "char" => return Some(TokenType::Char),
+                    "const" => return Some(TokenType::Const),
+                    "continue" => return Some(TokenType::Continue),
+                    "default" => return Some(TokenType::Default),
+                    "do" => return Some(TokenType::Do),
+                    "double" => return Some(TokenType::Double),
+                    "else" => return Some(TokenType::Else),
+                    "enum" => return Some(TokenType::Enum),
+                    "extern" => return Some(TokenType::Extern),
+                    "float" => return Some(TokenType::Float),
+                    "for" => return Some(TokenType::For),
+                    "goto" => return Some(TokenType::Goto),
+                    "if" => return Some(TokenType::If),
+                    "int" => return Some(TokenType::Int),
+                    "long" => return Some(TokenType::Long),
+                    "register" => return Some(TokenType::Register),
+                    "return" => return Some(TokenType::Return),
+                    "short" => return Some(TokenType::Short),
+                    "signed" => return Some(TokenType::Signed),
+                    "sizeof" => return Some(TokenType::Sizeof),
+                    "static" => return Some(TokenType::Static),
+                    "struct" => return Some(TokenType::Struct),
+                    "switch" => return Some(TokenType::Switch),
+                    "typedef" => return Some(TokenType::Typedef),
+                    "union" => return Some(TokenType::Union),
+                    "unsigned" => return Some(TokenType::Unsigned),
+                    "void" => return Some(TokenType::Void),
+                    "volatile" => return Some(TokenType::Volatile),
+                    "while" => return Some(TokenType::While),
 
                     _ => {
                         let identifier = self.arena.push_str(identifier_string.as_str()).unwrap();
-                        return Some(Token::Identifier(identifier));
+                        return Some(TokenType::Identifier(identifier));
                     }
                 }
             }
@@ -245,13 +318,13 @@ impl <'input> Lexer<'input> {
 
                 let string_literal = &mut String::new();
 
-                while let Some(c) = self.char_stream.next() {
+                while let Some(c) = self.next_char() {
                     if c == '\"' {
                         break;
                     }
 
                     if c == '\\' {
-                        let escaped_char = self.char_stream.next()?;
+                        let escaped_char = self.next_char()?;
                         string_literal.push(escaped_char);
                         
                     } else if c.is_ascii() {
@@ -260,7 +333,7 @@ impl <'input> Lexer<'input> {
                 }
 
                 let literal = self.arena.push_str(string_literal.as_str()).unwrap();
-                return Some(Token::StringLiteral(literal));
+                return Some(TokenType::StringLiteral(literal));
             }
 
             
@@ -277,17 +350,17 @@ impl <'input> Lexer<'input> {
 
                 let mut l_type = LiteralType::Int;
 
-                while let Some(c) = self.char_stream.peek() {
+                while let Some(c) = self.peek_char() {
                     if c.is_ascii_digit() || matches!(c, '.') {
                         num_literal_str.push(*c); 
                         
                         if *c == '.' {
                             l_type = LiteralType::Double;
                         }
-                        self.char_stream.next();
+                        self.next_char();
                     } else {
                         if *c == 'f' {
-                            self.char_stream.next();
+                            self.next_char();
                             l_type = LiteralType::Float;
                         }
                         break;
@@ -295,149 +368,126 @@ impl <'input> Lexer<'input> {
                 }
 
                 match l_type {
-                    LiteralType::Int => return Some(Token::IntegerLiteral(num_literal_str.parse().ok()?)),
-                    LiteralType::Float => return Some(Token::FloatLiteral(num_literal_str.parse::<f32>().ok()?)),
-                    LiteralType::Double => return Some(Token::DoubleLiteral(num_literal_str.parse::<f64>().ok()?))
+                    LiteralType::Int => return Some(TokenType::IntegerLiteral(num_literal_str.parse().ok()?)),
+                    LiteralType::Float => return Some(TokenType::FloatLiteral(num_literal_str.parse::<f32>().ok()?)),
+                    LiteralType::Double => return Some(TokenType::DoubleLiteral(num_literal_str.parse::<f64>().ok()?))
                 }
 
             }
 
             '+' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::Plus), 
-                    '+' => return Some(Token::Increment),  
-                    '=' => return Some(Token::PlusAssign) 
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::Plus), 
+                    '+' => return Some(TokenType::Increment),  
+                    '=' => return Some(TokenType::PlusAssign) 
                 );
             }
 
             '-' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::Minus), 
-                    '-' => return Some(Token::Decrement),  
-                    '=' => return Some(Token::MinusAssign),  
-                    '>' => return Some(Token::PtrOperand)
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::Minus), 
+                    '-' => return Some(TokenType::Decrement),  
+                    '=' => return Some(TokenType::MinusAssign),  
+                    '>' => return Some(TokenType::PtrOperand)
                 );
             }
 
             '*' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::Asterisk), 
-                    '=' => return Some(Token::MultAssign)  
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::Asterisk), 
+                    '=' => return Some(TokenType::MultAssign)  
                 );
             }
 
             '/' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::Div), 
-                    '=' => return Some(Token::DivAssign), 
-                    '/' => {
-                        // Handle one-line comments!
-                        loop {
-                            let c = self.char_stream.next()?;
-
-                            if c == '\n' {
-                                return self.next();
-                            }
-                        }
-                    },
-                    '*' => {
-                        // Handle multi-line comments!
-                        loop {
-                            let c = self.char_stream.next()?;
-
-                            if c == '*' {
-                                if *self.char_stream.peek()? == '/' { 
-                                    self.char_stream.next();
-                                    return self.next();
-                                }
-                            }
-                        }
-                    }
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::Div), 
+                    '=' => return Some(TokenType::DivAssign) 
                 );
             }
 
             '%' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::Mod), 
-                    '=' => return Some(Token::ModAssign)  
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::Mod), 
+                    '=' => return Some(TokenType::ModAssign)  
                 )
             }
 
             '&' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::Ampersand), 
-                    '&' => return Some(Token::ANDLogical),  
-                    '=' => return Some(Token::ANDAssign)  
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::Ampersand), 
+                    '&' => return Some(TokenType::ANDLogical),  
+                    '=' => return Some(TokenType::ANDAssign)  
                 );
             }
 
             '|' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::OR), 
-                    '|' => return Some(Token::ORLogical),  
-                    '=' => return Some(Token::ORAssign)
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::OR), 
+                    '|' => return Some(TokenType::ORLogical),  
+                    '=' => return Some(TokenType::ORAssign)
                 );
             }
 
             '^' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::XOR), 
-                    '=' => return Some(Token::XORAssign)
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::XOR), 
+                    '=' => return Some(TokenType::XORAssign)
                 );
             }
 
             '<' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::LessThan), 
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::LessThan), 
                     '<' => {
-                        lex_operand!(chars = self.char_stream, 
-                            fallback => return Some(Token::LeftShift),
-                            '=' => return Some(Token::LeftShiftAssign)
+                        lex_operand!(lexer = self, 
+                            fallback => return Some(TokenType::LeftShift),
+                            '=' => return Some(TokenType::LeftShiftAssign)
                         );
                     },  
-                    '=' => return Some(Token::LessThanOrEq)  
+                    '=' => return Some(TokenType::LessThanOrEq)  
                 );
             }
 
             '>' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::GreaterThan), 
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::GreaterThan), 
                     '>' => {
-                        lex_operand!(chars = self.char_stream, 
-                            fallback => return Some(Token::RightShift),
-                            '=' => return Some(Token::RightShiftAssign)
+                        lex_operand!(lexer = self, 
+                            fallback => return Some(TokenType::RightShift),
+                            '=' => return Some(TokenType::RightShiftAssign)
                         );
                     },  
-                    '=' => return Some(Token::GreaterThanOrEq)
+                    '=' => return Some(TokenType::GreaterThanOrEq)
                 );
             } 
 
 
             '!' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::NegationLogical), 
-                    '=' => return Some(Token::NotEquals)
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::NegationLogical), 
+                    '=' => return Some(TokenType::NotEquals)
                 );
             }
 
             '=' => {
-                lex_operand!(chars = self.char_stream, 
-                    fallback => return Some(Token::Assign), 
-                    '=' => return Some(Token::Equals)
+                lex_operand!(lexer = self, 
+                    fallback => return Some(TokenType::Assign), 
+                    '=' => return Some(TokenType::Equals)
                 );
             }
-            '~' => return Some(Token::Negation),
-            '?' => return Some(Token::Ternary),
-            '.' => return Some(Token::Dot),
-            ',' => return Some(Token::Comma),
-            ';' => return Some(Token::Semicolon),
-            ':' => return Some(Token::Colon),
-            '(' => return Some(Token::LParen), 
-            ')' => return Some(Token::RParen),    
-            '{' => return Some(Token::LCurlyBracket),  
-            '}' => return Some(Token::RCurlyBracket),  
-            '[' => return Some(Token::LBracket),  
-            ']' => return Some(Token::RBracket),  
+            '~' => return Some(TokenType::Negation),
+            '?' => return Some(TokenType::Ternary),
+            '.' => return Some(TokenType::Dot),
+            ',' => return Some(TokenType::Comma),
+            ';' => return Some(TokenType::Semicolon),
+            ':' => return Some(TokenType::Colon),
+            '(' => return Some(TokenType::LParen), 
+            ')' => return Some(TokenType::RParen),    
+            '{' => return Some(TokenType::LCurlyBracket),  
+            '}' => return Some(TokenType::RCurlyBracket),  
+            '[' => return Some(TokenType::LBracket),  
+            ']' => return Some(TokenType::RBracket),  
 
             _ => {
                 //return Some(Token::Unknown);

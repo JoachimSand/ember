@@ -60,3 +60,8 @@ $ ./target/release/ember -h
 
 ### Tests
 Work-in-progress.
+
+### TO-DO:
+- Improve error displaying and handling.
+
+
