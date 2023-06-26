@@ -6,15 +6,15 @@ use crate::arena::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Token<'t> {
-    pos : Pos,
+    pub pos : Pos,
     pub token_type : TokenType<'t>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Pos {
+pub struct Pos {
     start_col : usize,
     end_col : usize,
-    line_num : usize,
+    pub line_num : usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -152,19 +152,34 @@ pub struct Lexer<'input> {
     arena : &'input Arena,
 
     // references to lines in input
-    lines : Vec<&'input str>,
+    pub lines : Vec<&'input str>,
     // absolute position of last character lexed
     char_pos : usize,           
     // absolute pos of where the line currently being lexed starts 
-    cur_line_start : usize,     
+    cur_line_start : usize,   
+
+    peek_token : Option<Token<'input>>,
 }
 
 
-impl <'input> Iterator for Lexer <'input> { 
-   
-    type Item = Token<'input>; 
+impl <'input> Lexer <'input> {
 
-    fn next(&mut self) -> Option<Self::Item> {    
+    pub fn peek_token(&mut self) -> Option<Token<'input>> {
+        //TODO: Can be done cleaner with map
+        if let Some(tok) = self.peek_token {
+            return Some(tok);
+        } else {
+            let peek_tok = self.next_token(); 
+            self.peek_token = peek_tok;
+            return peek_tok;
+        }
+    }
+
+    pub fn next_token(&mut self) -> Option<Token<'input>> { 
+        if let Some(tok) = self.peek_token {
+            self.peek_token = None;
+            return Some(tok);
+        }
 
         // get rid of white space and comments first
         loop {
@@ -196,18 +211,15 @@ impl <'input> Iterator for Lexer <'input> {
                 break;
             }
         }
-
         
         // track position before and after lexing token.
         // This can be used to track the size and pos of the token
         let line_num = self.lines.len();
         let start_col = self.char_pos - self.cur_line_start;
-
         let token_type = self.next_token_type()?;
-        let pos = Pos { start_col, line_num, end_col : self.char_pos};
+        let pos = Pos { start_col, line_num, end_col : self.char_pos - self.cur_line_start};
 
         let token = Token { pos, token_type};
-        println!("{token:?}");
         Some(token)
     }
 }
@@ -218,7 +230,7 @@ impl <'input> Lexer<'input> {
     pub fn new(input : &'input str, arena : &'input Arena) -> Self {
         Lexer {
             input, char_stream : input.chars().peekable(), arena,
-            lines : Vec::new(), cur_line_start : 0, char_pos : 0
+            lines : Vec::new(), cur_line_start : 0, char_pos : 0, peek_token : None
         }
     }
 
@@ -226,23 +238,18 @@ impl <'input> Lexer<'input> {
         self.char_stream.peek()
     }
 
-    fn next_char(&mut self) -> Option<char>{
+    pub fn next_char(&mut self) -> Option<char>{
         let c = self.char_stream.next()?;
         self.char_pos += 1;
 
         if c == '\n' {
-            self.lines.push(&self.input[self.cur_line_start..self.char_pos - 1]);
-            println!("Line {}", self.lines.last().unwrap());
+            let new_line = &self.input[self.cur_line_start..self.char_pos - 1];
+            self.lines.push(new_line);
             self.cur_line_start = self.char_pos;
         }
 
         Some(c)
     }
-
-    fn generate_error(pos : Pos, msg : &str) {
-
-    }
-
 
     fn next_token_type(&mut self) -> Option<TokenType<'input>> {    
         let mut first_char = self.next_char()?;

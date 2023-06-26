@@ -17,7 +17,7 @@ pub enum CompilationError<'e> {
     NotImplemented,
     UnexpectedToken(Token<'e>),
     EarlyLexerTermination,
-    UnknownPrecedence(Token<'e>),
+    UnknownOperator(Token<'e>),
     UnableToDecomposeDeclaration,
     InvalidConstExpression,
 
@@ -27,22 +27,35 @@ pub enum CompilationError<'e> {
     NoScopes,
 }
 
-impl <'e> Error for CompilationError<'e> {}
 
-impl <'e> fmt::Display for CompilationError<'e> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        use CompilationError::*;
-        let err_str = match self {
-            InsufficientSpace       => "Memory Arena ran out of space.".to_string(),
-            NotImplemented          => "Error caused by feature not yet implemented.".to_string(),
-            UnimplVerbose(msg)      => format!("Error caused by unimplemented feature {msg}"),
-            EarlyLexerTermination   => format!("Lexer terminated early."),
-            UnknownPrecedence(t)    => format!("Token {t:?} does not have any precedence associated with it"),
-            _ => return write!(f, "Compilation Error: {:?}", self)  
-        };
-
-        write!(f, "Compilation Error: {err_str}")
+fn display_token_error(token : Token, lexer : &mut Lexer, msg : String){
+    println!("ERROR: {msg}");
+    println!("On line {}", token.pos.line_num);
+    while token.pos.line_num >= lexer.lines.len() {
+        lexer.next_char();
     }
+
+    let err_line = lexer.lines[token.pos.line_num];
+    println!("{err_line}")
+}
+
+fn display_compilation_error<'i>(err : CompilationError<'i>, lexer : &mut Lexer) {
+    use CompilationError::*;
+    let err_str = match err {
+        InsufficientSpace       => "Memory Arena ran out of space.".to_string(),
+        NotImplemented          => "Error caused by feature not yet implemented.".to_string(),
+        UnimplVerbose(msg)      => format!("Error caused by unimplemented feature {msg}"),
+        EarlyLexerTermination   => format!("Lexer terminated early."),
+        UnknownOperator(t)    => format!("Expect an operator, found {t:?}"),
+        UnexpectedToken(t)    => {
+            display_token_error(t, lexer, format!("Unexpected token {:#?}.", t.token_type));
+            return;
+        }
+        _ => format!("Compilation Error: {err:?}"), 
+
+    };
+
+    println!("Compilation Error: {err_str}")
 }
 
 // Don't compile - only parse the input
@@ -51,26 +64,26 @@ pub fn parse_only(input : &str){
     println!("{input}");
     let arena = &mut Arena::new(20000);
 
-    let lexer = &mut Lexer::new(&input, &arena).peekable();
+    let lexer = &mut Lexer::new(&input, &arena);
     match parse_translational_unit(lexer, arena) {
         Ok(node) => {
             //println!("{:?}", node);
             print_ast(node, "".to_string(), true);
         }
-        Err(e) => println!("{e}"),
+        Err(e) => display_compilation_error(e, lexer),
     }
 }
 
 pub fn compile_start(input : &str){
     let arena = &mut Arena::new(20000);
     match compile(input, &arena) {
-        Err(e) => println!("{e}"),
+        Err(e) => println!("{e:?}"),
         Ok(()) => (),
     }
 }
 
 fn compile<'i : 'a, 'a>(input : &'i str, arena : &'a Arena) -> Result<(), CompilationError<'a>>{
-    let lexer = &mut Lexer::new(&input, &arena).peekable();
+    let lexer = &mut Lexer::new(&input, &arena);
 
     let translation_unit = parse_translational_unit(lexer, arena)?;
     print_ast(translation_unit, "".to_string(), true);

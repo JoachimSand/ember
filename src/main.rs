@@ -49,6 +49,8 @@ impl fmt::Display for MainError {
 
 
 fn main() -> Result<(), MainError>{
+    println!("DEBUGGING!");
+    
     let args : Vec<String> = env::args().collect();
     //println!("Recieved args: {:?}", args);
     
