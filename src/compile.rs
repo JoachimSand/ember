@@ -16,7 +16,8 @@ pub enum CompilationError<'e> {
     UnimplVerbose(String),
     NotImplemented,
     UnexpectedToken(Token<'e>),
-    EarlyLexerTermination,
+    ExpectedToken(TokenType<'e>),
+    ExpectedInput/*(&'e str)*/,
     UnknownOperator(Token<'e>),
     UnableToDecomposeDeclaration,
     InvalidConstExpression,
@@ -30,7 +31,7 @@ pub enum CompilationError<'e> {
 
 fn display_token_error(token : Token, lexer : &mut Lexer, msg : String){
     println!("ERROR: {msg}");
-    println!("On line {}", token.pos.line_num);
+    println!("On line {}:", token.pos.line_num);
     while token.pos.line_num >= lexer.lines.len() {
         lexer.next_char();
     }
@@ -45,8 +46,13 @@ fn display_compilation_error<'i>(err : CompilationError<'i>, lexer : &mut Lexer)
         InsufficientSpace       => "Memory Arena ran out of space.".to_string(),
         NotImplemented          => "Error caused by feature not yet implemented.".to_string(),
         UnimplVerbose(msg)      => format!("Error caused by unimplemented feature {msg}"),
-        EarlyLexerTermination   => format!("Lexer terminated early."),
-        UnknownOperator(t)    => format!("Expect an operator, found {t:?}"),
+
+        // TODO: This error is generally unhelpful without explain _what_ the parser expected to come next.
+        ExpectedInput => format!("Lexer terminated early."),
+        UnknownOperator(t)    => {
+            display_token_error(t, lexer , format!("Expected an operator, got {:#?}", t.token_type));
+            return;
+        }
         UnexpectedToken(t)    => {
             display_token_error(t, lexer, format!("Unexpected token {:#?}.", t.token_type));
             return;

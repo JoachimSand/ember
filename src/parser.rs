@@ -103,14 +103,14 @@ pub enum Node<'n> {
 
 // TODO: Convert into From trait
 // wrapper functions for easy conversion to parser errors
-fn next_token<'l, 't : 'l>(lexer : &'l mut Lexer<'t>) -> Result<Token<'t>, CompilationError<'t>> 
+fn next_token<'l, 't : 'l>(lexer : &'l mut Lexer<'l>/*, arena : &'a Arena, expecting : &'a str*/) -> Result<Token<'t>, CompilationError<'t>> 
 {
-    lexer.next_token().ok_or(CompilationError::EarlyLexerTermination)
+    lexer.next_token().ok_or(CompilationError::ExpectedInput)
 }
 
-fn peek_token<'l, 't : 'l>(lexer : &'l mut Lexer<'t>) -> Result<Token<'t>, CompilationError<'t>> 
+fn peek_token<'l, 't : 'l>(lexer : &'l mut Lexer<'l>/*, arena : &'a Arena, expecting : &'a str*/) -> Result<Token<'t>, CompilationError<'t>> 
 {
-    lexer.peek_token().ok_or(CompilationError::EarlyLexerTermination)
+    lexer.peek_token().ok_or(CompilationError::ExpectedInput)
 }
 
 struct OperatorInfo {
@@ -119,7 +119,7 @@ struct OperatorInfo {
 }
 // Lookup table for binary operators
 // https://en.cppreference.com/w/c/language/operator_precedence
-fn operator_lookup<'t>(token : &'t Token) -> Result<OperatorInfo, CompilationError<'t>> {
+fn operator_lookup<'t, 'e>(token : &'t Token<'e>) -> Result<OperatorInfo, CompilationError<'e>> {
     match token.token_type {
         TokenType::Asterisk | TokenType::Div | TokenType::Mod => {
             return Result::Ok(OperatorInfo{precedence : 200, left_associative : true});
@@ -176,9 +176,10 @@ fn operator_lookup<'t>(token : &'t Token) -> Result<OperatorInfo, CompilationErr
 
 fn expect_token<'l, 't : 'l>(lexer : &'l mut Lexer<'t>, expect : TokenType) -> Result<Token<'t>, CompilationError<'t>> 
 {
-    let cur_token = next_token(lexer)?;
+    let cur_token = lexer.next_token().ok_or(CompilationError::ExpectedToken(expect))?;
 
-    if std::mem::discriminant(&cur_token.token_type) == std::mem::discriminant(&expect) {
+ 
+    if cur_token.token_type == expect {
         return Ok(cur_token);
     } else {
         return Err(CompilationError::UnexpectedToken(cur_token));
@@ -207,7 +208,7 @@ pub fn parse_primary<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) 
         }
 
         TokenType::LParen => {
-            let expr = parse_expr(lexer, arena, 0)?;
+            let expr = parse_expr(lexer, arena, 0, &[TokenType::RParen])?;
             expect_token(lexer, TokenType::RParen)?;
             return Ok(expr);
         }
@@ -239,7 +240,7 @@ fn parse_postfix<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> R
             
             TokenType::LBracket => { // Array Index
                 next_token(lexer)?;
-                let index = parse_expr(lexer, arena, 0)?;
+                let index = parse_expr(lexer, arena, 0, &[TokenType::RBracket])?;
                 expect_token(lexer, TokenType::RBracket)?;
                 let new_primary = Node::ArrayIndex{ lvalue : primary, index };
                 primary = arena.push(new_primary)?;
@@ -254,10 +255,12 @@ fn parse_postfix<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> R
                     next_token(lexer)?;
                     arguments = arena.push_slice_copy(&[])?;
                 } else {
-                    let mut argument_list = vec![parse_expr(lexer, arena, 0)?];
+                    let accepted_terminators = [TokenType::Comma, TokenType::RParen];
+
+                    let mut argument_list = vec![parse_expr(lexer, arena, 0, &accepted_terminators)?];
                     while let TokenType::Comma = peek_token(lexer)?.token_type {
                         next_token(lexer)?;
-                        argument_list.push(parse_expr(lexer, arena, 0)?);
+                        argument_list.push(parse_expr(lexer, arena, 0, &accepted_terminators)?);
                     }
                     arguments = arena.push_slice_copy(&argument_list[..])?;
                     expect_token(lexer, TokenType::RParen)?;
@@ -348,7 +351,7 @@ fn parse_unary<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Res
     }
 }
 
-fn parse_expr<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, min_precedence : u8) -> Result<&'arena Node<'arena>, CompilationError<'arena>>
+fn parse_expr<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, min_precedence : u8, accepted_terminators : &[TokenType]) -> Result<&'arena Node<'arena>, CompilationError<'arena>>
 {
     // Find next atom
     let mut expr : &Node = parse_unary(lexer, arena)?;
@@ -356,7 +359,12 @@ fn parse_expr<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, min_pre
     loop {
         let peek_token = peek_token(lexer)?;
 
-        if let Ok(op_info) = operator_lookup(&peek_token) {
+        if accepted_terminators.contains(&peek_token.token_type) {
+            // when we start parsing an expression, we should specify which token may succesfully "terminate an expression".
+            // e.g. ] when parsing an array index expression.
+            return Ok(expr);
+        } else {
+            let op_info = operator_lookup(&peek_token)?;            
             
             if op_info.precedence < min_precedence {
                 return Ok(expr);
@@ -366,19 +374,15 @@ fn parse_expr<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, min_pre
 
             let rhs : &Node;
             if op_info.left_associative {
-                rhs = parse_expr(lexer, arena, min_precedence + 1)?;
+                rhs = parse_expr(lexer, arena, min_precedence + 1, accepted_terminators)?;
             } else { 
-                rhs = parse_expr(lexer, arena, min_precedence)?;
+                rhs = parse_expr(lexer, arena, min_precedence, accepted_terminators)?;
             }
 
             // By splitting the creation of the new expr node into two steps we avoid using Jones' trick.
             let new_expr = Node::Infix{operator : op_token, left : expr, right : rhs};
             expr = arena.push(new_expr)?;
-        } else {
-            // Peek token not recognised as operator - this is not an error,
-            // as we may simply have run into the end of the expression.
-            return Ok(expr);
-        }
+        } 
     }
 }
 
@@ -490,6 +494,11 @@ fn parse_struct_or_union_specifier<'arena>(lexer : &mut Lexer<'arena>, arena : &
     return Ok(specifier);
 }
 
+
+
+// enumerator
+// 	: IDENTIFIER
+// 	| IDENTIFIER '=' constant_expression
 fn parse_enumerator<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena Enumerator<'arena>, CompilationError<'arena>>{
     let mut enumerator : Enumerator = Enumerator { name: "", val: None };
 
@@ -502,7 +511,7 @@ fn parse_enumerator<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -
 
     if let TokenType::Assign = peek_token(lexer)?.token_type {
         next_token(lexer)?;
-        let const_expr = parse_expr(lexer, arena, 0)?;
+        let const_expr = parse_expr(lexer, arena, 0, &[TokenType::Comma])?;
         enumerator.val = Some(eval_const_expression(const_expr)? as i32);
     } else {
         enumerator.val = None;
@@ -758,7 +767,7 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Lexer<'arena>, arena : &'aren
                     next_token(lexer)?;
                     derived_types.push(DerivedType::Array{ size : None});
                 } else {
-                    let constant_expression = parse_expr(lexer, arena, 0)?;
+                    let constant_expression = parse_expr(lexer, arena, 0, &[TokenType::RBracket])?;
                     let size = eval_const_expression(constant_expression)?;
                     derived_types.push(DerivedType::Array{ size: Some(size)});
                     expect_token(lexer, TokenType::RBracket)?;
@@ -825,7 +834,7 @@ fn parse_initializer<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) 
             return Ok(initializer_list);
         }
 
-        _ => return parse_expr(lexer, arena, 0),
+        _ => return parse_expr(lexer, arena, 0, &[TokenType::Comma, TokenType::RCurlyBracket]),
     }
 }
 
@@ -929,7 +938,7 @@ pub fn parse_expr_statement<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena 
             return Ok(arena.push(Node::Empty)?);
         }
         _ => {
-            let expr = parse_expr(lexer, arena, 0)?;
+            let expr = parse_expr(lexer, arena, 0, &[TokenType::Semicolon])?;
             expect_token(lexer, TokenType::Semicolon)?;
             return Ok(expr);
         }
@@ -959,9 +968,9 @@ pub fn parse_statement<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena
             // into a single list which can be iterated over. This should
             // make SSA/codegen easier.
             loop {
-                next_token(lexer)?; // consume if
+                next_token(lexer)?; // consume the if token
                 expect_token(lexer, TokenType::LParen)?;
-                let condition = parse_expr(lexer, arena, 0)?;
+                let condition = parse_expr(lexer, arena, 0, &[TokenType::RParen])?;
                 expect_token(lexer, TokenType::RParen)?;
                 let statement = parse_statement(lexer, arena)?;
                 let if_node = arena.push(IfNode{ condition, statement })?;
@@ -1029,7 +1038,7 @@ pub fn parse_statement<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena
                 }
 
                 _ => {
-                    let expression = parse_expr(lexer, arena, 0)?;
+                    let expression = parse_expr(lexer, arena, 0, &[TokenType::Semicolon])?;
                     expect_token(lexer, TokenType::Semicolon)?;
                     let node = Node::Return { expression };
                     return Ok(arena.push(node)?);
@@ -1058,7 +1067,7 @@ pub fn parse_statement<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena
         TokenType::While => {
             next_token(lexer)?;
             expect_token(lexer, TokenType::LParen)?;
-            let condition = parse_expr(lexer, arena, 0)?;
+            let condition = parse_expr(lexer, arena, 0, &[TokenType::RParen])?;
 
             expect_token(lexer, TokenType::RParen)?;
             let statement = parse_statement(lexer, arena)?;
@@ -1072,7 +1081,7 @@ pub fn parse_statement<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena
 
             expect_token(lexer, TokenType::While)?;
             expect_token(lexer, TokenType::LParen)?;
-            let condition = parse_expr(lexer, arena, 0)?;
+            let condition = parse_expr(lexer, arena, 0, &[TokenType::RParen])?;
             expect_token(lexer, TokenType::RParen)?;
             expect_token(lexer, TokenType::Semicolon)?;
             
@@ -1085,8 +1094,8 @@ pub fn parse_statement<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena
             expect_token(lexer, TokenType::LParen)?;
             let init_statement = parse_expr_statement(lexer, arena)?;
             let condition = parse_expr_statement(lexer, arena)?;
-            let iter_statement = if let Ok(expr) = parse_expr(lexer, arena, 0) {
-                expr
+            let iter_statement = if let TokenType::RParen = peek_token(lexer)?.token_type {
+                parse_expr(lexer, arena, 0, &[TokenType::RParen])?
             } else {
                 arena.push(Node::Empty)?
             };
