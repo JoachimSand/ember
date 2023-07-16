@@ -105,12 +105,16 @@ pub enum Node<'n> {
 // wrapper functions for easy conversion to parser errors
 fn next_token<'l, 't : 'l>(lexer : &'l mut Lexer<'t>/*, arena : &'a Arena, expecting : &'a str*/) -> Result<Token<'t>, CompilationError<'t>> 
 {
-    lexer.next_token().ok_or(CompilationError::ExpectedInput)
+    let t = lexer.next_token().ok_or(CompilationError::ExpectedInput);
+    println!("consumed {t:?}");
+    t
 }
 
 fn peek_token<'l, 't : 'l>(lexer : &'l mut Lexer<'t>/*, arena : &'a Arena, expecting : &'a str*/) -> Result<Token<'t>, CompilationError<'t>> 
 {
-    lexer.peek_token().ok_or(CompilationError::ExpectedInput)
+    let t = lexer.peek_token().ok_or(CompilationError::ExpectedInput);
+    println!("peekd {t:?}");
+    t
 }
 
 struct OperatorInfo {
@@ -187,13 +191,14 @@ fn expect_token<'l, 't : 'l>(lexer : &'l mut Lexer<'t>, expect : TokenType<'t>) 
 
 fn expect_closing_delimiter<'l, 't : 'l>(lexer : &'l mut Lexer<'t>, opening_delimeter : Token<'t>, expected_delimeter : TokenType<'t>) -> Result<Token<'t>, CompilationError<'t>> 
 {
-    let cur_token = lexer.next_token().ok_or(CompilationError::UnclosedDelimeter(opening_delimeter))?;
-    
-    if cur_token.token_type == expected_delimeter {
-        return Ok(cur_token);
-    } else {
-        return Err(CompilationError::UnclosedDelimeter(opening_delimeter));
+    let mut cur_token = lexer.next_token().ok_or(CompilationError::UnclosedDelimeter(opening_delimeter))?;
+
+    // The current token is not the closing delimiter. However, we may simple have stopped parsing early and the delimeter may simply be further down.
+    while cur_token.token_type != expected_delimeter {
+        cur_token = lexer.next_token().ok_or(CompilationError::UnclosedDelimeter(opening_delimeter))?;
     }
+
+    Ok(cur_token)
 }
 
 type ParseResult<'arena> = Result<&'arena Node<'arena>, CompilationError<'arena>>;
@@ -1193,7 +1198,7 @@ fn parse_compound_statement<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena 
     let l_curl = expect_token(lexer, TokenType::LCurlyBracket)?;
 
     let mut parse_compound_contents = || -> Result<&Node, CompilationError>{
-        let mut declarations = Vec::<&Node>::new(); 
+        let mut declarations = Vec::<&Node>::new();
 
         loop {
             match peek_token(lexer)?.token_type {
@@ -1218,6 +1223,7 @@ fn parse_compound_statement<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena 
         loop {
             match peek_token(lexer)?.token_type {
                 TokenType::RCurlyBracket => {
+                    println!("found rcurl, stopping...");
                     break;
                 }
                 _ => {

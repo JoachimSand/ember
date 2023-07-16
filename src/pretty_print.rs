@@ -365,7 +365,6 @@ macro_rules! green {
     }}
 }
 
-
 #[macro_export]
 macro_rules! yellow {
     ( $l:literal) => {{

@@ -31,7 +31,7 @@ pub enum CompilationError<'e> {
 
 
 fn display_token_error(token : Token, lexer : &mut Lexer, msg : String){
-    println!("ERROR: {msg}");
+    println!("{}: {msg}", red!("error"));
     println!("On line {}:", token.pos.line_num);
     while token.pos.line_num >= lexer.lines.len() {
         lexer.next_char();
@@ -49,7 +49,7 @@ fn display_compilation_error<'i>(err : CompilationError<'i>, lexer : &mut Lexer)
         NotImplemented          => "Error caused by feature not yet implemented.".to_string(),
         UnimplVerbose(msg)      => format!("Error caused by unimplemented feature {msg}"),
 
-        // TODO: This error is generally unhelpful without explain _what_ the parser expected to come next.
+        // TODO: This error is generally unhelpful without explaining _what_ the parser expected to come next.
         ExpectedInput => format!("Lexer terminated early."),
         UnknownOperator(t)    => {
             display_token_error(t, lexer , format!("Expected an operator, got {:#?}", t.token_type));
