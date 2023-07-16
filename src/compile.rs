@@ -18,6 +18,7 @@ pub enum CompilationError<'e> {
     UnexpectedToken(Token<'e>),
     ExpectedToken(TokenType<'e>),
     ExpectedInput/*(&'e str)*/,
+    UnclosedDelimeter(Token<'e>),
     UnknownOperator(Token<'e>),
     UnableToDecomposeDeclaration,
     InvalidConstExpression,
@@ -37,7 +38,8 @@ fn display_token_error(token : Token, lexer : &mut Lexer, msg : String){
     }
 
     let err_line = lexer.lines[token.pos.line_num];
-    println!("{err_line}")
+    println!("{err_line}");
+    println!("{0: <1$}{0:^<2$}", "", token.pos.start_col, token.pos.end_col - token.pos.start_col);
 }
 
 fn display_compilation_error<'i>(err : CompilationError<'i>, lexer : &mut Lexer) {
@@ -55,6 +57,11 @@ fn display_compilation_error<'i>(err : CompilationError<'i>, lexer : &mut Lexer)
         }
         UnexpectedToken(t)    => {
             display_token_error(t, lexer, format!("Unexpected token {:#?}.", t.token_type));
+            return;
+        }
+
+        UnclosedDelimeter(t) => {
+            display_token_error(t, lexer, format!("This delimiter is unclosed {:#?}.", t.token_type));
             return;
         }
         _ => format!("Compilation Error: {err:?}"), 
@@ -82,15 +89,15 @@ pub fn parse_only(input : &str){
 
 pub fn compile_start(input : &str){
     let arena = &mut Arena::new(20000);
-    match compile(input, &arena) {
-        Err(e) => println!("{e:?}"),
+    let lexer = &mut Lexer::new(&input, &arena);
+
+    match compile(&arena, lexer) {
+        Err(e) => display_compilation_error(e, lexer),
         Ok(()) => (),
     }
 }
 
-fn compile<'i : 'a, 'a>(input : &'i str, arena : &'a Arena) -> Result<(), CompilationError<'a>>{
-    let lexer = &mut Lexer::new(&input, &arena);
-
+fn compile<'a>(arena : &'a Arena, lexer : &mut Lexer<'a>) -> Result<(), CompilationError<'a>>{
     let translation_unit = parse_translational_unit(lexer, arena)?;
     print_ast(translation_unit, "".to_string(), true);
     //type_check_start(translation_unit)?;

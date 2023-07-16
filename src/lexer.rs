@@ -12,8 +12,8 @@ pub struct Token<'t> {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pos {
-    start_col : usize,
-    end_col : usize,
+    pub start_col : usize,
+    pub end_col : usize,
     pub line_num : usize,
 }
 

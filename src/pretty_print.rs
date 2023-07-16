@@ -236,6 +236,14 @@ pub fn print_ast_specifiers(specifiers_node : &SpecifierList, prefix : String, i
 pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
     let new_prefix = print_ast_prefix(prefix, is_last);
     println!("{}", start);
+
+    let print_child = |child : &Node| {
+        print_ast(child, new_prefix.clone(), false);
+    };
+
+    let print_last_child = |child : &Node| {
+        print_ast(child, new_prefix.clone(), true);
+    };
     
     match *start {
         
@@ -245,11 +253,11 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
             print_ast_prefix(new_prefix.clone(), false);
             println!("{declarator}");
 
-            print_ast(compound_statement, new_prefix, true);
+            print_last_child(compound_statement);
         }
 
         Node::CompoundStatement{declaration_list, statement_list} => {
-            print_ast(declaration_list, new_prefix.clone(), false);
+            print_child(declaration_list);
             print_ast(statement_list, new_prefix, true);
         }
 
@@ -265,7 +273,7 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
         Node::InitDeclarator(node) => {
             print_ast_prefix(new_prefix.clone(), false);
             println!("{}", node.declarator);
-            print_ast(node.initializer, new_prefix, true);
+            print_last_child(node.initializer);
         }
 
         Node::IfStatementList(list) => {
@@ -278,19 +286,20 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
         }
 
         Node::WhileStatement { condition, statement } => {
-            print_ast(condition, new_prefix.clone(), false);
-            print_ast(statement, new_prefix, true); 
+            print_child(condition);
+            print_last_child(statement); 
         }
 
         Node::DoWhileStatement { statement, condition } => {
-            print_ast(statement, new_prefix.clone(), false); 
-            print_ast(condition, new_prefix, true);
+            print_child(statement); 
+            print_last_child(condition);
         }
 
-        Node::ForStatement { init_statement, condition, iter_statement } => {
-           print_ast(init_statement, new_prefix.clone(), false);
-           print_ast(condition, new_prefix.clone(), false); 
-           print_ast(iter_statement, new_prefix, true); 
+        Node::ForStatement { init_statement, condition, iter_statement, statement } => {
+            print_child(init_statement);
+            print_child(condition); 
+            print_child(iter_statement);
+            print_last_child(statement);
         }
 
         Node::FunctionCall { function, arguments } => {
@@ -299,8 +308,8 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
         }
 
         Node::ArrayIndex { lvalue, index } => {
-            print_ast(lvalue, new_prefix.clone(), false);
-            print_ast(index, new_prefix, true);
+            print_child(lvalue);
+            print_last_child(index);
         }
 
         Node::Return { expression } => {
@@ -311,19 +320,19 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
             return;
         }
         Node::Infix{ left, right, .. } => {
-            print_ast(left, new_prefix.clone(), false);
-            print_ast(right, new_prefix, true);
+            print_child(left);
+            print_last_child(right);
         }
         Node::Prefix(node) => {
-            print_ast(node.operand, new_prefix, true);
+            print_last_child(node.operand);
         }
         Node::Postfix(node) => {
-            print_ast(node.operand, new_prefix, true);
+            print_last_child(node.operand);
         }
 
         Node::Declaration{ declaration_specifiers, init_declarator_list} => {
             print_ast_specifiers(declaration_specifiers, new_prefix.clone(), false);
-            print_ast(init_declarator_list, new_prefix, true);
+            print_last_child(init_declarator_list);
         }
 
         _ => {

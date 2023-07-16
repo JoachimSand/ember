@@ -12,9 +12,7 @@ mod arena;
 mod compile;
 mod codegen;
 
-
 use compile::*;
-
 
 // Global Error type for the whole compiler.
 #[derive(Debug)]
