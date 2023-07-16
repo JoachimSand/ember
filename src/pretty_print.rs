@@ -347,21 +347,21 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
 #[macro_export]
 macro_rules! black {
     ( $l:literal) => {{
-        colour!($l, "black")
+        colour!($l, "1;30m")
     }}
 }
 
 #[macro_export]
 macro_rules! red {
     ( $l:literal) => {{
-        colour!($l, "red")
+        colour!($l, "1;31m")
     }}
 }
 
 #[macro_export]
 macro_rules! green {
     ( $l:literal) => {{
-        colour!($l, "green")
+        colour!($l, "1;32m")
     }}
 }
 
@@ -369,130 +369,105 @@ macro_rules! green {
 #[macro_export]
 macro_rules! yellow {
     ( $l:literal) => {{
-        colour!($l, "yellow")
+        colour!($l, "1;33m")
     }}
 }
 
 #[macro_export]
 macro_rules! blue {
     ( $l:literal) => {{
-        colour!($l, "blue")
+        colour!($l, "1;34m")
     }}
 }
 
 #[macro_export]
 macro_rules! magenta {
     ( $l:literal) => {{
-        colour!($l, "magenta")
+        colour!($l, "1;35m")
     }}
 }
 
 #[macro_export]
 macro_rules! cyan {
     ( $l:literal) => {{
-        colour!($l, "cyan")
+        colour!($l, "1;36m")
     }}
 }
 
 #[macro_export]
 macro_rules! white {
     ( $l:literal) => {{
-        colour!($l, "white")
+        colour!($l, "1;37m")
     }}
 }
 
 #[macro_export]
 macro_rules! default {
     ( $l:literal) => {{
-        colour!($l, "default")
+        colour!($l, "1;39m")
     }}
 }
 
 #[macro_export]
 macro_rules! b_black {
     ( $l:literal) => {{
-        colour!($l, "b_black")
+        colour!($l, "1;90m")
     }}
 }
 
 #[macro_export]
 macro_rules! b_red {
     ( $l:literal) => {{
-        colour!($l, "b_red")
+        colour!($l, "1;91m")
     }}
 }
 
 #[macro_export]
 macro_rules! b_green {
     ( $l:literal) => {{
-        colour!($l, "b_green")
+        colour!($l, "1;92m")
     }}
 }
 
 #[macro_export]
 macro_rules! b_yellow {
     ( $l:literal) => {{
-        colour!($l, "b_yellow")
+        colour!($l, "1;93m")
     }}
 }
 
 #[macro_export]
 macro_rules! b_blue {
     ( $l:literal) => {{
-        colour!($l, "b_blue")
+        colour!($l, "1;94m")
     }}
 }
 
 #[macro_export]
 macro_rules! b_magenta {
     ( $l:literal) => {{
-        colour!($l, "b_magenta")
+        colour!($l, "1;95m")
     }}
 }
 
 #[macro_export]
 macro_rules! b_cyan {
     ( $l:literal) => {{
-        colour!($l, "b_cyan")
+        colour!($l, "1;96m")
     }}
 }
 
 #[macro_export]
 macro_rules! d_white {
     ( $l:literal) => {{
-        colour!($l, "d_white")
+        colour!($l, "1;37;1m")
     }}
 }
 
 #[macro_export]
 macro_rules! colour {
-    ( $l:expr, $c:literal) => {{
-        let ret : &str = match $c {
-            "black" =>      concat!("\x1b[1;30m", $l, "\x1b[0m"),
-            "red" =>        concat!("\x1b[1;31m", $l, "\x1b[0m"),
-            "green" =>      concat!("\x1b[1;32m", $l, "\x1b[0m"),
-            "yellow" =>     concat!("\x1b[1;33m", $l, "\x1b[0m"),
-            "blue" =>       concat!("\x1b[1;34m", $l, "\x1b[0m"),
-            "magenta" =>    concat!("\x1b[1;35m", $l, "\x1b[0m"),
-            "cyan" =>       concat!("\x1b[1;36m", $l, "\x1b[0m"),
-            "white" =>      concat!("\x1b[1;37m", $l, "\x1b[0m"),
-            "default" =>    concat!("\x1b[1;39m", $l, "\x1b[0m"),
-            
-            // bright colours
-            "b_black" =>    concat!("\x1b[1;90m", $l, "\x1b[0m"),
-            "b_red" =>      concat!("\x1b[1;91m", $l, "\x1b[0m"),
-            "b_green" =>    concat!("\x1b[1;92m", $l, "\x1b[0m"),
-            "b_yellow" =>   concat!("\x1b[1;93m", $l, "\x1b[0m"),
-            "b_blue" =>     concat!("\x1b[1;94m", $l, "\x1b[0m"),
-            "b_magenta" =>  concat!("\x1b[1;95m", $l, "\x1b[0m"),
-            "b_cyan" =>     concat!("\x1b[1;96m", $l, "\x1b[0m"),
-            "b_white" =>    concat!("\x1b[1;97m", $l, "\x1b[0m"),
-            
-            // dim colours
-            "d_white" =>    concat!("\x1b[1;37;1m", $l, "\x1b[0m"),
-            _ =>            concat!("\x1b[0;0m", $l, "\x1b[0m"),
-        };
-        ret
+    ( $l:expr, $format:literal) => {{
+        concat!("\x1b[", $format, $l, "\x1b[0m")
     }}
 }
 

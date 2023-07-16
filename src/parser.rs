@@ -1218,7 +1218,6 @@ fn parse_compound_statement<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena 
         loop {
             match peek_token(lexer)?.token_type {
                 TokenType::RCurlyBracket => {
-                    next_token(lexer)?;
                     break;
                 }
                 _ => {
