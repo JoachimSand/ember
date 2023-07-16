@@ -38,8 +38,24 @@ fn display_token_error(token : Token, lexer : &mut Lexer, msg : String){
     }
 
     let err_line = lexer.lines[token.pos.line_num];
+    let mut start_col = token.pos.start_col;
+    let mut end_col = token.pos.end_col;
+
+    for (p, char) in err_line.chars().enumerate() {
+        if char == '\t' {
+            if p < start_col {
+                start_col += 3;
+            }
+
+            if p < end_col {
+                end_col += 3;
+            }
+        }
+    }
+
+    let err_line = err_line.replace("\t", "    ");
     println!("{err_line}");
-    println!("{0: <1$}{0:^<2$}", "", token.pos.start_col, token.pos.end_col - token.pos.start_col);
+    println!("{0: <1$}{0:^<2$}", "", start_col, end_col - start_col);
 }
 
 fn display_compilation_error<'i>(err : CompilationError<'i>, lexer : &mut Lexer) {
