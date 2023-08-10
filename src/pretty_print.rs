@@ -1,39 +1,61 @@
 use std::fmt;
+use std::fmt::write;
 
 use crate::parser::*;
 use crate::lexer::*;
 
-impl<'n> fmt::Display for Specifier<'n> {
+impl<'n> fmt::Display for Specifiers<'n> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        match self {
-            Specifier::StorageClass(token) | Specifier::TypeQualifier(token) | Specifier::BasicType(token) => {
-                write!(f, "\x1b[1;34m{:?}\x1b[0m", token.token_type)
-            }
-
-            Specifier::Struct{ is_union, name, ..} => {
-                if *is_union {
-                    write!(f, "union ")?;
-                } else {
-                    write!(f, "struct ")?;
-                }
-
-                if let Some(name) = name {
-                    write!(f, "{:?}", name)?;
-                } else {
-                    write!(f, "anonymous ")?;
-                }
-                Ok(())
-            }
-
-            Specifier::Enum { name, .. } => {
-                if let Some(name) = name {
-                    write!(f, "enum {:?}", name)?;
-                } else {
-                    write!(f, "enum anonymous ")?;
-                }
-                Ok(())
-            }
+        if self.is_const {
+            write!(f, "const ")?;
         }
+        if self.is_volatile {
+            write!(f, "volatile ")?;
+        }
+        if self.is_extern {
+            write!(f, "extern ")?;
+        }
+        if self.is_static {
+            write!(f, "static ")?;
+        }
+        match self.type_specifier {
+            TypeSpecifier::UnsignedChar => write!(f, "unsigned char")?,
+            TypeSpecifier::SignedChar => write!(f, "signed char")?,
+            TypeSpecifier::Short => write!(f, "short")?,
+            TypeSpecifier::UnsignedShort => write!(f, "unsigned short")?,
+            TypeSpecifier::Int => write!(f, "int")?,
+            TypeSpecifier::UnsignedInt => write!(f, "unsigned int")?,
+            TypeSpecifier::Long => write!(f, "long")?,
+            TypeSpecifier::UnsignedLong => write!(f, "unsigned long")?,
+            TypeSpecifier::LongLong => write!(f, "long long")?,
+            TypeSpecifier::UnsignedLongLong => write!(f, "unsigned long long")?,
+            TypeSpecifier::Float => write!(f, "float")?,
+            TypeSpecifier::Double => write!(f, "double")?,
+            TypeSpecifier::LongDouble => write!(f, "long double")?,
+            TypeSpecifier::Void => write!(f, "void")?,
+            TypeSpecifier::Enum { name, .. } => {
+                if let Some(name) = name {
+                    write!(f, "enum {:?}", name)?
+                } else {
+                    write!(f, "enum anonymous")?
+                }
+            }
+            TypeSpecifier::Struct { is_union, name, .. } => {
+                if is_union {
+                    write!(f, "union ")?
+                } else {
+                    write!(f, "struct ")?
+                }
+
+                if let Some(name) = name {
+                    write!(f, "{:?}", name)?
+                } else {
+                    write!(f, "anonymous ")?
+                }
+            }
+            TypeSpecifier::None => (),
+        }
+        Ok(())
     }
 }
 
@@ -51,12 +73,6 @@ impl<'n> fmt::Display for Enumerator<'n> {
         } else {
             write!(f, ", val unspecified")
         }
-    }
-}
-
-impl<'n> fmt::Display for SpecifierList<'n> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "Specifiers")
     }
 }
 
@@ -204,16 +220,15 @@ pub fn print_ast_list<'n, T : fmt::Display, F: Fn(T, String, bool)>(node_list : 
     }
 }
 
-pub fn print_ast_specifiers(specifiers_node : &SpecifierList, prefix : String, is_last : bool){
+pub fn print_ast_specifiers(specifiers_node : &Specifiers, prefix : String, is_last : bool){
     let specifiers_prefix = print_ast_prefix(prefix.clone(), is_last);
     println!("{}", specifiers_node);
-    
-    let print_specifier = |child : &&Specifier, list_prefix : String, is_last : bool | {
-        match child {
-            Specifier::Struct { declaration_list, .. } => {
+    let print_specifier = |type_specifier : &TypeSpecifier, list_prefix : String, is_last : bool | {
+        match type_specifier {
+            TypeSpecifier::Struct { declaration_list, .. } => {
                 //let specifier_prefix = print_ast_prefix(list_prefix.clone(), is_last)
                 let print_struct_declaration = |declaration : &&StructDeclarationNode, prefix : String, _ : bool | {
-                    print_ast_specifiers(declaration.specifier_qualifier_list, prefix.clone(), false);
+                    print_ast_specifiers(declaration.specifiers, prefix.clone(), false);
                     print_ast_list(declaration.struct_declarator_list, prefix, true, true, |_, _, _| ());
                 };
 
@@ -222,15 +237,16 @@ pub fn print_ast_specifiers(specifiers_node : &SpecifierList, prefix : String, i
                 }
             }
 
-            Specifier::Enum { enumerator_list, .. } => {
-                if let Some(enumerator_list) = *enumerator_list {
-                    print_ast_list(enumerator_list, list_prefix, is_last, true, |_, _, _| ());
+            TypeSpecifier::Enum { enumerator_list, .. } => {
+                if let Some(enumerator_list) = enumerator_list {
+                    print_ast_list(*enumerator_list, list_prefix, is_last, true, |_, _, _| ());
                 }
             }
             _ => return,
         }
     };
-    print_ast_list(specifiers_node.specifiers.iter(), specifiers_prefix, true, true, print_specifier);
+    print_specifier(&specifiers_node.type_specifier, specifiers_prefix, true);
+    //print_ast_list(specifiers_node.specifiers.iter(), specifiers_prefix, true, true, print_specifier);
 }
 
 pub fn print_ast(start : &Node, prefix : String, is_last : bool) {

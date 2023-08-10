@@ -22,6 +22,10 @@ pub enum CompilationError<'e> {
     UnknownOperator(Token<'e>),
     UnableToDecomposeDeclaration,
     InvalidConstExpression,
+    CannotCombineDeclarationSpecifiers{
+        prev_specifier : Token<'e>,
+        specifier : Token<'e>, 
+    },
 
     // Type Check Errors
     Redefinition(&'e str),
