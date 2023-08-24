@@ -78,7 +78,6 @@ pub enum DeclarationSpecifiers<'n> {
     TypeSpecification(Specifiers<'n>),
 }
 
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructDeclarationNode<'n> {
     pub specifiers : &'n Specifiers<'n>,
@@ -669,19 +668,6 @@ fn parse_specifier_qualifier_list<'arena>(lexer : &mut Lexer<'arena>, arena : &'
 // 	| type_qualifier
 // 	| type_qualifier declaration_specifiers
 
-
-
-// Declaration specififiers/Specifier_qualifier list are both quite generic structures to parse,
-// as they represent numerous different use cases.
-
-// 1. Type specification e.g. const unsigned long long, extern struct my_struct { int t; }
-//    Every type qualifier and storage class specifier will work for every type specification.
-//    However, the type specifiers can not be matched in willy nilly: struct does obviously not
-//    work in tandem with unsigned, for instance.
-// 2. Type definitions: typedef enum { a = 3 } typename;
-// 3. Type qualifiers only
-// 4. Type specifiers only
-
 macro_rules! TYPE_STARTER {
     () => (TokenType::Void | TokenType::Char | TokenType::Short | TokenType::Int | TokenType::Long | TokenType::Float | TokenType::Double | TokenType::Signed | TokenType::Unsigned);
 }
@@ -696,6 +682,9 @@ macro_rules! DECLARATION_SPECIFIER_STARTER {
     };
 }
 
+
+// TODO: While the error messages showing which specifiers cannot be combined is quite nice,
+// it does complicate this code somewhat. Using bools instead of tokens would slightly
 fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, parse_storage_specifiers : bool) -> Result<&'arena Specifiers<'arena>, CompilationError<'arena>> {
 
     let mut specifiers = Specifiers {
@@ -706,8 +695,6 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
         is_static : false,
         type_specifier : TypeSpecifier::None,
     };
-
-    let mut main_type_specifier_token : Option<Token> = None;
 
     // State used to parse primitives    
     let mut unsigned_t : Option<Token> = None;
@@ -723,6 +710,9 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
     let mut enum_t : Option<Token> = None;
     let mut struct_or_union_t : Option<Token> = None;
 
+    let mut typedef_token : Option<Token> = None;
+    let mut extern_token : Option<Token> = None;
+    let mut static_token : Option<Token> = None;
     
     let mut parse_declaration_specifier = |lexer : &mut Lexer<'arena>, arena : &'arena Arena| -> Result<(), CompilationError>{
         
@@ -764,9 +754,9 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
                 let cur_token = next_token(lexer)?;
 
                 match cur_token.token_type {
-                    TokenType::Typedef => specifiers.is_typedef = true,
-                    TokenType::Extern => specifiers.is_extern = true,
-                    TokenType::Static => specifiers.is_static = true,
+                    TokenType::Typedef => typedef_token = Some(cur_token),
+                    TokenType::Extern => extern_token = Some(cur_token),
+                    TokenType::Static => static_token = Some(cur_token),
                     TokenType::Auto | TokenType::Register => return Err(CompilationError::NotImplemented),
                     _ => panic!("This can not happen. Missed storage class specifier in match-statement while parsing."),
                 }
@@ -818,7 +808,7 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
             }
                      
             TokenType::Struct | TokenType::Union => {
-                set_specifier_token(lexer, &mut void_t, false)?;
+                set_specifier_token(lexer, &mut struct_or_union_t, false)?;
                 specifiers.type_specifier = parse_struct_or_union_specifier(lexer, arena)?;
                 Ok(())
             }
@@ -844,6 +834,19 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
         println!("In here {res:?}");
     }
 
+    // Ensure that no invalid combination of storage specifiers occurs.
+    match (static_token, extern_token, typedef_token){
+        (Some(_), None, None) => specifiers.is_static = true,
+        (None, Some(_), None) => specifiers.is_extern = true,
+        (None, None, Some(_)) => specifiers.is_typedef = true,
+        (Some(s), Some(e), _) | (Some(s), _, Some(e)) => 
+            return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: e, specifier: s }),
+        (Some(e), _, Some(t)) | (_, Some(e), Some(t)) =>
+            return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: e, specifier: t }),
+        (None, None, None) => (),
+    }
+
+    // Convert the type specifiers to a single type specifier
     match (unsigned_t, signed_t, char_t, short_t, int_t, long_t, float_t, double_t, void_t, enum_t, struct_or_union_t) {
         (Some(u), Some(s), ..) => return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: u, specifier: s }),
 
@@ -1203,14 +1206,9 @@ fn parse_init_declarator_list<'arena>(lexer : &mut Lexer<'arena>, arena : &'aren
         list.push(parse_init_declarator(lexer, arena)?);
     }
 
-    if list.len() == 1 {
-        // if we only encountered one init declarator, just return the single init declarator on it's own
-        return Ok(arena.push(Node::InitDeclarator(init_declarator))?);
-    } else {
-        let list = arena.push_slice_copy(&list[..])?;
-        let node = arena.push(Node::InitDeclaratorList(list))?;
-        return Ok(node);
-    }
+    let list = arena.push_slice_copy(&list[..])?;
+    let node = arena.push(Node::InitDeclaratorList(list))?;
+    return Ok(node);
 }
 
 // declaration
@@ -1226,6 +1224,26 @@ pub fn parse_declaration<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Are
         init_declarator_list = arena.push(Node::Empty)?;
     } else {
         init_declarator_list = parse_init_declarator_list(lexer, arena)?;
+
+        if declaration_specifiers.is_typedef {
+            
+            if let Node::InitDeclaratorList(init_decl_list) = *init_declarator_list {
+                for init_decl in init_decl_list {
+                    
+                    // A typedef expression can not have an initializer
+                    // TODO: We would like an error which can refer to a token.
+                    // Solution might be to add a "main" token to each node,
+                    // which is the token that most closely represents that node.
+                    match init_decl.initializer {
+                        Node::Empty => (),
+                        _ => return Err(CompilationError::IllegalInitializer { identifier_name: init_decl.declarator.name }),
+                    }
+
+                    //init_decl.declarator.
+                    
+                }
+            }
+        }
     }
 
     if consume_semicolon {

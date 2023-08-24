@@ -26,6 +26,9 @@ pub enum CompilationError<'e> {
         prev_specifier : Token<'e>,
         specifier : Token<'e>, 
     },
+    IllegalInitializer {
+        identifier_name : &'e str,
+    },
 
     // Type Check Errors
     Redefinition(&'e str),
