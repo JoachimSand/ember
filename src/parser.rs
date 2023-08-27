@@ -1,5 +1,3 @@
-use std::any::TypeId;
-use std::iter::Peekable;
 use crate::lexer::*;
 use crate::arena::*;
 use crate::compile::CompilationError;
@@ -17,7 +15,7 @@ pub struct UnaryNode<'n> {
 pub enum DerivedType<'n> {
     Pointer{ is_const : bool, is_volatile : bool },
     Array { size : Option<i64> },
-    _Function { parameter_list : &'n Node<'n> },
+    Function { parameter_type_list : &'n ParameterTypeList<'n> },
     FunctionParameterless,
 }
 
@@ -86,8 +84,20 @@ pub struct StructDeclarationNode<'n> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ParamDeclaration<'n> {
+    pub declaration_specifiers : &'n Specifiers<'n>,
+    pub declarator : Option<&'n DeclaratorNode<'n>>
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParameterTypeList<'n> {
+    pub param_declarations : &'n [&'n ParamDeclaration<'n>],
+    pub has_ellipsis : bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct DeclaratorNode<'n> {
-    pub name : &'n str,
+    pub name : Option<&'n str>,
     pub derived_types : &'n [DerivedType<'n>],
 }
 
@@ -493,12 +503,12 @@ fn eval_const_expression<'e>(node : &Node) -> Result<i64, CompilationError<'e>> 
 fn parse_struct_declaration<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena StructDeclarationNode<'arena>, CompilationError<'arena>> {
     let specifiers = parse_specifier_qualifier_list(lexer, arena)?;
 
-    let declarator = parse_declarator(lexer, arena)?;
+    let declarator = parse_declarator(lexer, arena, false)?;
     let mut declarator_list = vec![declarator];
 
     while let TokenType::Comma = peek_token(lexer)?.token_type {
         next_token(lexer)?;
-        declarator_list.push(parse_declarator(lexer, arena)?);
+        declarator_list.push(parse_declarator(lexer, arena, false)?);
     }
 
     expect_token(lexer, TokenType::Semicolon)?;
@@ -995,6 +1005,78 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
 }
 
 
+// parameter_declaration
+// 	: declaration_specifiers declarator
+// 	| declaration_specifiers abstract_declarator
+// 	| declaration_specifiers
+// 	;
+fn parse_parameter_declaration<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena ParamDeclaration<'arena>, CompilationError<'arena>>{
+    let declaration_specifiers = parse_declaration_specifiers(lexer, arena, true)?; 
+   
+    // A parameter_declaration is only ever part of a parameter_list, which in turn is only ever part of a parameter_type_list.
+    // As such, we know for certain that a parameter_declaration does not have a declarator if the next token is a "," (as this
+    // indicates another following parameter_declaration) or ")" (as this marks the end of a parameter_type_list)
+    let declarator = match peek_token(lexer)?.token_type {
+        TokenType::Comma | TokenType::RParen => None,
+        _ => {
+            let declarator = parse_declarator(lexer, arena, true)?;
+            let declarator_node = arena.push(declarator)?;
+            Some(declarator)
+        }
+    };
+
+    let param_declaration = ParamDeclaration { declaration_specifiers, declarator};
+    return Ok(arena.push(param_declaration)?)
+}
+
+// parameter_type_list
+// 	: parameter_list
+// 	| parameter_list ',' ELLIPSIS
+
+// parameter_list
+// 	: parameter_declaration
+// 	| parameter_list ',' parameter_declaration
+fn parse_parameter_type_list<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena ParameterTypeList<'arena>, CompilationError<'arena>>{
+    // TODO: Implement parsing of ellipsis for variadic functions.
+    
+    let param_declaration = parse_parameter_declaration(lexer, arena)?;
+
+    let mut list = vec![param_declaration];
+
+    while let TokenType::Comma = peek_token(lexer)?.token_type {
+        next_token(lexer)?;
+        
+
+        
+        list.push(parse_parameter_declaration(lexer, arena)?);
+    }
+
+    let slice = arena.push_slice_copy(&list[..])?;
+    let param_type_list = ParameterTypeList { param_declarations : slice, has_ellipsis : false};
+    return Ok(arena.push(param_type_list)?);
+}
+
+
+// abstract_declarator
+// 	: pointer
+// 	| direct_abstract_declarator
+// 	| pointer direct_abstract_declarator
+// 	;
+
+// direct_abstract_declarator
+// 	: '(' abstract_declarator ')'
+// 	| '[' ']'
+// 	| '[' constant_expression ']'
+// 	| direct_abstract_declarator '[' ']'
+// 	| direct_abstract_declarator '[' constant_expression ']'
+// 	| '(' ')'
+// 	| '(' parameter_type_list ')'
+// 	| direct_abstract_declarator '(' ')'
+// 	| direct_abstract_declarator '(' parameter_type_list ')'
+// 	;
+
+// an abstract declarator is just a declarator without an identifier
+
 //pointer
 //	: '*'
 //	| '*' type_qualifier_list
@@ -1014,14 +1096,13 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
 // 	| direct_declarator '[' constant_expression ']'
 // 	| direct_declarator '[' ']'
 // 	| direct_declarator '(' parameter_type_list ')'
-// 	| direct_declarator '(' identifier_list ')'
+// 	| direct_declarator '(' identifier_list ')' NOTE: Only needed for K&R function definitions
 // 	| direct_declarator '(' ')'
-
 
 // declarator
 // 	: pointer direct_declarator
 // 	| direct_declarator
-fn parse_declarator_recursive<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, derived_types : &mut Vec<DerivedType>, name : &mut&'arena str) -> Result<(), CompilationError<'arena>> {
+fn parse_declarator_recursive<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, can_be_abstract : bool, derived_types : &mut Vec<DerivedType<'arena>>, name : &mut Option<&'arena str>) -> Result<(), CompilationError<'arena>> {
     
     // parse pointer derived types but don't push them to list of derived types on the way down
     // the declarator tree
@@ -1053,18 +1134,66 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Lexer<'arena>, arena : &'aren
         next_token(lexer)?;
     }
 
+    // If the declarator can be abstract, it will not neccessarily have an identifier as a base case.
+    // We need to be more careful: A Lparen could either indicate a function call, a parameter type list
+    // or another abstract declarator.
+    if can_be_abstract {
+        
+        let cur_token = peek_token(lexer)?;
+        match cur_token.token_type {
+            TokenType::Identifier(id_name) => {
+                next_token(lexer);
+                *name = Some(id_name);
+            }
+            TokenType::LBracket => (),
+            TokenType::LParen => {
+                // For an abstract declarator, a left-paren may indicate a function call derived type,
+                // a parameter type list (function arguments) or the beginnning of another abstract declarator.                
+                let cur_token = next_token(lexer)?;
+                match peek_token(lexer)?.token_type {
+                    TokenType::RParen => {
+                        // Function call derived type. Add it and continue
+                        next_token(lexer)?;
+                        derived_types.push(DerivedType::FunctionParameterless);
+                    }
+                    TokenType::Identifier(_) | TokenType::LBracket | TokenType::LParen | TokenType::Asterisk => {
+                        // An abstract declarator can only start with the above tokens, 
+                        // and a parameter type list can not start with any one of them. 
+                        // Hence we must be dealing with an abstract declarator.
 
-    let cur_token = next_token(lexer)?;
-    match cur_token.token_type {
-        TokenType::Identifier(id_name) => {
-            *name = id_name;
+                        let decl_res = parse_declarator_recursive(lexer, arena, can_be_abstract, derived_types, name);
+                        expect_closing_delimiter(lexer, cur_token, TokenType::RParen)?;
+                        decl_res?
+                    }
+
+                    _ => {
+                        // The remaining possibility is a parameter type list
+                        let param_list_res = parse_parameter_type_list(lexer, arena);
+                        expect_closing_delimiter(lexer, cur_token, TokenType::RParen)?;
+                        let parameter_type_list = param_list_res?;
+                        derived_types.push(DerivedType::Function { parameter_type_list });
+                    }                    
+                }
+            }
+            _ => return Err(CompilationError::UnexpectedToken(cur_token)),
         }
-        TokenType::LParen => {
-            let decl_res = parse_declarator_recursive(lexer, arena, derived_types, name);
-            expect_closing_delimiter(lexer, cur_token, TokenType::RParen)?;
-            decl_res?
+    } else {
+        
+        // Not a possibility of declarator not having an identifier as a base-case.
+        // Parse either an identifier (base case) or another parenthesized 
+        // declarator (recursive case).
+        let cur_token = next_token(lexer)?;
+        match cur_token.token_type {
+            TokenType::Identifier(id_name) => {
+                *name = Some(id_name);
+            }
+            TokenType::LParen => {
+                let decl_res = parse_declarator_recursive(lexer, arena, can_be_abstract, derived_types, name);
+                expect_closing_delimiter(lexer, cur_token, TokenType::RParen)?;
+                decl_res?
+            }
+            _ => return Err(CompilationError::UnexpectedToken(cur_token)),
         }
-        _ => return Err(CompilationError::UnexpectedToken(cur_token)),
     }
 
     // Each "layer" of a declarator can only contain one derived type:
@@ -1072,15 +1201,22 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Lexer<'arena>, arena : &'aren
     // 2. [Base] is a function returning...
     // The former of the two can be repeated more than once in a declarator layer,
     // the latter cannot.
+    // TODO: Ensure a function derived type is not followed by another function derived type.
 
     loop {
         match peek_token(lexer)?.token_type {
             TokenType::LParen => { // function declaration
-                next_token(lexer)?;
+                let l_paren = next_token(lexer)?;
 
-                // TODO: Implement parameter_type_list and identifier_list
-                expect_token(lexer, TokenType::RParen).map_err(|_| CompilationError::NotImplemented)?;
-                derived_types.push(DerivedType::FunctionParameterless);
+                if let TokenType::RParen = peek_token(lexer)?.token_type {
+                    next_token(lexer);
+                    derived_types.push(DerivedType::FunctionParameterless);
+                } else {
+                    let param_list_res = parse_parameter_type_list(lexer, arena);
+                    expect_closing_delimiter(lexer, l_paren, TokenType::RParen)?;
+                    let parameter_type_list = param_list_res?;
+                    derived_types.push(DerivedType::Function { parameter_type_list });
+                }
                 
             }
             TokenType::LBracket => {
@@ -1105,11 +1241,11 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Lexer<'arena>, arena : &'aren
     return Ok(());
 }
 
-fn parse_declarator<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena DeclaratorNode<'arena>, CompilationError<'arena>> {
-    let mut name = "";
+fn parse_declarator<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, can_be_abstract : bool) -> Result<&'arena DeclaratorNode<'arena>, CompilationError<'arena>> {
+    let mut name = None;
     let mut derived_types_list : Vec<DerivedType> = Vec::new();
 
-    parse_declarator_recursive(lexer, arena, &mut derived_types_list, &mut name)?;
+    parse_declarator_recursive(lexer, arena, can_be_abstract, &mut derived_types_list, &mut name)?;
     //println!("Declarator {:?}, {:?}", name, derived_types_list);
 
     let derived_types = arena.push_slice_copy(&derived_types_list[..])?;
@@ -1117,17 +1253,6 @@ fn parse_declarator<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -
     return Ok(declarator);
 }
 
-// parameter_type_list
-// 	: parameter_list
-// 	| parameter_list ',' ELLIPSIS
-
-// parameter_list
-// 	: parameter_declaration
-// 	| parameter_list ',' parameter_declaration
-/*
-fn parse_parameter_type_list<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena DeclaratorNode<'arena>, CompilationError<'arena>>{
-    // TODO: Implement parsing of ellipsis for variadic functions.
-}*/
 
 //initializer_list
 //	: initializer
@@ -1177,7 +1302,7 @@ fn parse_initializer<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) 
 //	| declarator '=' initializer
 //	;
 fn parse_init_declarator<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena InitDeclaratorNode<'arena>, CompilationError<'arena>> {
-    let declarator = parse_declarator(lexer, arena)?;
+    let declarator = parse_declarator(lexer, arena, false)?;
     match peek_token(lexer)?.token_type {
         TokenType::Assign => {
             next_token(lexer)?;
@@ -1236,7 +1361,7 @@ pub fn parse_declaration<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Are
                     // which is the token that most closely represents that node.
                     match init_decl.initializer {
                         Node::Empty => (),
-                        _ => return Err(CompilationError::IllegalInitializer { identifier_name: init_decl.declarator.name }),
+                        _ => return Err(CompilationError::IllegalInitializer { identifier_name: init_decl.declarator.name.unwrap() }),
                     }
 
                     //init_decl.declarator.
@@ -1601,10 +1726,14 @@ fn parse_external_declaration<'arena>(lexer : &mut Lexer<'arena>, arena : &'aren
             if let Node::Declaration{ declaration_specifiers, init_declarator_list} = *declaration {
                 func_declaration_specifiers = declaration_specifiers;
 
-                if let Node::InitDeclarator(init_node) = *init_declarator_list {
+                if let Node::InitDeclaratorList(init_list) = *init_declarator_list {
+                    if init_list.len() != 1 {
+                        return Err(CompilationError::UnableToDecomposeDeclaration); 
+                    }
+                    let init_node = init_list[0];
                     let first_type = init_node.declarator.derived_types.last().ok_or(CompilationError::UnableToDecomposeDeclaration)?;
                     match first_type {
-                        DerivedType::_Function{ .. } | DerivedType::FunctionParameterless => func_declarator = init_node.declarator,
+                        DerivedType::Function{ .. } | DerivedType::FunctionParameterless => func_declarator = init_node.declarator,
                         _ => return Err(CompilationError::UnableToDecomposeDeclaration),
                     }
                 } else {

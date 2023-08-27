@@ -1,175 +1,71 @@
 use std::fmt;
 use std::fmt::write;
+use std::println;
 
 use crate::parser::*;
 use crate::lexer::*;
 
-impl<'n> fmt::Display for Specifiers<'n> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        if self.is_const {
-            write!(f, "const ")?;
-        }
-        if self.is_volatile {
-            write!(f, "volatile ")?;
-        }
-        if self.is_extern {
-            write!(f, "extern ")?;
-        }
-        if self.is_static {
-            write!(f, "static ")?;
-        }
-        match self.type_specifier {
-            TypeSpecifier::UnsignedChar => write!(f, "unsigned char")?,
-            TypeSpecifier::SignedChar => write!(f, "signed char")?,
-            TypeSpecifier::Short => write!(f, "short")?,
-            TypeSpecifier::UnsignedShort => write!(f, "unsigned short")?,
-            TypeSpecifier::Int => write!(f, "int")?,
-            TypeSpecifier::UnsignedInt => write!(f, "unsigned int")?,
-            TypeSpecifier::Long => write!(f, "long")?,
-            TypeSpecifier::UnsignedLong => write!(f, "unsigned long")?,
-            TypeSpecifier::LongLong => write!(f, "long long")?,
-            TypeSpecifier::UnsignedLongLong => write!(f, "unsigned long long")?,
-            TypeSpecifier::Float => write!(f, "float")?,
-            TypeSpecifier::Double => write!(f, "double")?,
-            TypeSpecifier::LongDouble => write!(f, "long double")?,
-            TypeSpecifier::Void => write!(f, "void")?,
-            TypeSpecifier::Enum { name, .. } => {
-                if let Some(name) = name {
-                    write!(f, "enum {:?}", name)?
-                } else {
-                    write!(f, "enum anonymous")?
+pub fn print_declarator(declarator : &DeclaratorNode, prefix : String, is_last : bool){
+    let new_prefix = print_ast_prefix(prefix.clone(), is_last);
+
+    if let Some(name) = declarator.name {
+        println!("{} {}", green!("Declarator"), name);
+    } else {
+        println!("{}", green!("Abstract Declarator"));
+    }
+
+    if declarator.derived_types.is_empty() {
+        return;
+    }
+    
+    let mut iter = declarator.derived_types.iter().peekable();
+
+    while let Some(node) = iter.next() {
+        let derived_type_prefix = if iter.peek().is_some() {
+            print_ast_prefix(new_prefix.clone(), false)
+        } else {            
+            print_ast_prefix(new_prefix.clone(), true)
+        };
+
+        match *node {
+            DerivedType::Pointer{is_const, is_volatile} =>{
+                if is_const {
+                    print!("c");
                 }
+
+                if is_volatile {
+                    print!("v");
+                }
+
+                println!("{}", green!("* "));
             }
-            TypeSpecifier::Struct { is_union, name, .. } => {
-                if is_union {
-                    write!(f, "union ")?
-                } else {
-                    write!(f, "struct ")?
-                }
+            DerivedType::FunctionParameterless => println!("{}", green!("() ")),
+            DerivedType::Function { parameter_type_list } => {
+                println!("{}", green!("() "));
 
-                if let Some(name) = name {
-                    write!(f, "{:?}", name)?
-                } else {
-                    write!(f, "anonymous ")?
-                }
-            }
-            TypeSpecifier::None => (),
-        }
-        Ok(())
-    }
-}
+                for (p, param_declaration) in parameter_type_list.param_declarations.iter().enumerate() {
 
-impl<'n> fmt::Display for StructDeclarationNode<'n> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "Struct Declaration")
-    }
-}
-
-impl<'n> fmt::Display for Enumerator<'n> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "{} {:?}", red!("Enumerator"), self.name)?;
-        if let Some(val) = self.val {
-            write!(f, ", val: {}", val)
-        } else {
-            write!(f, ", val unspecified")
-        }
-    }
-}
-
-impl<'n> fmt::Display for DeclaratorNode<'n> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        
-        write!(f, "{} {}", green!("Declarator"), self.name)?;
-
-        if self.derived_types.len() > 0 {
-            write!(f, ", ")?;
-        }
-
-        let mut iter = self.derived_types.iter().peekable();
-
-        while let Some(node) = iter.next() {
-            match *node {
-                DerivedType::Pointer{is_const, is_volatile} =>{
-                    if is_const {
-                        write!(f, "c")?;
-                    }
-
-                    if is_volatile {
-                        write!(f, "v")?;
-                    }
-
-                    write!(f, "{}", green!("* "))?;
-                }
-                DerivedType::FunctionParameterless => write!(f, "{}", green!("() "))?,
-                DerivedType::Array { size }=> { 
-                    if let Some(size) = size {
-                        write!(f, "{}{}{} ", green!("["), size, green!("]"))?;
+                    let param_prefix = print_ast_prefix(derived_type_prefix.clone(), p == parameter_type_list.param_declarations.len() - 1);
+                    println!("Parameter Declaration");
+                    
+                    if let Some(declarator) = param_declaration.declarator {
+                        print_ast_specifiers(param_declaration.declaration_specifiers, param_prefix.clone(), false);
+                        print_declarator(declarator, param_prefix.clone(), true);
                     } else {
-                        write!(f, "{}", green!("[] "))?;
+                        print_ast_specifiers(param_declaration.declaration_specifiers, param_prefix.clone(), true);
                     }
+                    
+                    
                 }
-                _ => write!(f, "Unimplemented")?,
+                //parameter_type_list.param_declarations[0].declaration_specifiers
             }
-        }
-        Ok(())
-    }
-}
-
-impl<'n> fmt::Display for InitDeclaratorNode<'n> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "{}", "Init Declarator")
-    }
-}
-
-impl<'n> fmt::Display for IfNode<'n> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "{}", red!("If Statement"))
-    }
-}
-
-impl<'n> fmt::Display for Node<'n> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Node::TranslationalUnit{..} => write!(f, "{}", yellow!("Translational Unit")),
-            Node::FunctionDefinition{..} => write!(f, "{}", yellow!("Function Definition")),
-            Node::CompoundStatement{..} => write!(f, "{}", ("Compound Statement")),
-            Node::DeclarationList(_) => write!(f, "{}", cyan!("Declaration List ")),
-            Node::StatementList(_) => write!(f, "{}", red!("Statement List")),
-        
-            Node::Declaration{..} => write!(f, "{}", cyan!("Declaration")),
-            Node::InitDeclaratorList(_) => write!(f, "Init Declarator List"),
-            Node::InitDeclarator(node) => write!(f, "{}", node),
-            Node::InitializerList(_) => write!(f, "Initializer List"),
-            
-            Node::IfStatementList(_) => write!(f, "{}", red!("If Statement List")),
-            Node::WhileStatement {..} => write!(f, "{}", red!("While Statement")),
-            Node::DoWhileStatement{..} => write!(f, "{}", red!("Do While Statement")),
-            Node::ForStatement{..} => write!(f, "{}", red!("For Statement")),
-            
-            Node::ArrayIndex{..} => write!(f, "Array Index"),
-            Node::FunctionCall{..} => write!(f, "Function Call"),
-            
-            Node::Return { .. } => write!(f, "{}", red!("Return")),  
-            Node::Infix{operator, ..} => write!(f, "I{:?}", operator.token_type),
-            Node::Prefix(n) => write!(f, "Prefix {:?}", n.operator.token_type),
-            Node::Postfix(n) => write!(f, "Postfix {:?}", n.operator.token_type),
-            Node::Literal(t) => {
-                
-                write!(f, "\x1b[1;35m")?;
-                match t.token_type {
-                    TokenType::IntegerLiteral(val) => write!(f, "{}", val)?, 
-                    TokenType::DoubleLiteral(val) => write!(f, "{}", val)?,
-                    TokenType::FloatLiteral(val) => write!(f, "{}", val)?,
-                    TokenType::StringLiteral(val) => write!(f, "{}", val)?,
-                    _ => ()
+            DerivedType::Array { size }=> { 
+                if let Some(size) = size {
+                    println!("{}{}{} ", green!("["), size, green!("]"));
+                } else {
+                    println!("{}", green!("[] "));
                 }
-                write!(f, "\x1b[0m")
             }
-            Node::Identifier{name} => write!(f, "\x1b[1;90m{}\x1b[0m", name),
-
-            Node::Empty => write!(f, "{}", b_black!("Empty")),
-            _ => write!(f, "Unknown Node"),
-
         }
     }
 }
@@ -187,71 +83,110 @@ fn print_ast_prefix(prefix : String, is_last : bool) -> String{
     return new_prefix;
 }
 
-pub fn print_ast_list<'n, T : fmt::Display, F: Fn(T, String, bool)>(node_list : impl IntoIterator<Item = T>, prefix : String, is_last : bool, print_child : bool, f : F)
+pub fn print_ast_list<'e, T : 'e, F: Fn(&T, String, bool)>(node_list : &[&T], prefix : String, is_last : bool, child_recurs : F)
 {
     //let new_prefix = print_ast_prefix(prefix.clone(), is_last);
-    let mut iter = node_list.into_iter().peekable();
+    //let mut iter = node_list.into_iter().peekable();
 
     // If list is empty
-    if iter.peek().is_none() {
+    if node_list.is_empty() {
         print_ast_prefix(prefix.clone(), is_last);
         println!("Empty");
         return;
     }
 
-    while let Some(child) = iter.next(){
-        if iter.peek().is_some() {
-            if print_child {
-                let child_prefix = print_ast_prefix(prefix.clone(), false);
-                println!("{}", child);
-                f(child, child_prefix, false);
-            } else {
-                f(child, prefix.clone(), false);
-            }
+    for (index, child) in node_list.iter().enumerate() {
+        if index == node_list.len() - 1 {
+            child_recurs(*child, prefix.clone(), true);
         } else {
-            if print_child {
-                let child_prefix = print_ast_prefix(prefix.clone(), is_last);
-                println!("{}", child);
-                f(child, child_prefix, true);
-            } else {
-                f(child, prefix.clone(), true);
-            }
+            child_recurs(*child, prefix.clone(), false);
         }
     }
 }
 
 pub fn print_ast_specifiers(specifiers_node : &Specifiers, prefix : String, is_last : bool){
     let specifiers_prefix = print_ast_prefix(prefix.clone(), is_last);
-    println!("{}", specifiers_node);
-    let print_specifier = |type_specifier : &TypeSpecifier, list_prefix : String, is_last : bool | {
-        match type_specifier {
-            TypeSpecifier::Struct { declaration_list, .. } => {
-                //let specifier_prefix = print_ast_prefix(list_prefix.clone(), is_last)
-                let print_struct_declaration = |declaration : &&StructDeclarationNode, prefix : String, _ : bool | {
-                    print_ast_specifiers(declaration.specifiers, prefix.clone(), false);
-                    print_ast_list(declaration.struct_declarator_list, prefix, true, true, |_, _, _| ());
+
+    if specifiers_node.is_const {
+        print!("const ");
+    }
+    if specifiers_node.is_volatile {
+        print!("volatile ");
+    }
+    if specifiers_node.is_extern {
+        print!("extern ");
+    }
+    if specifiers_node.is_static {
+        print!("static ");
+    }
+    
+    match specifiers_node.type_specifier {
+        TypeSpecifier::UnsignedChar => println!("unsigned char"),
+        TypeSpecifier::SignedChar => println!("signed char"),
+        TypeSpecifier::Short => println!("short"),
+        TypeSpecifier::UnsignedShort => println!("unsigned short"),
+        TypeSpecifier::Int => println!("int"),
+        TypeSpecifier::UnsignedInt => println!("unsigned int"),
+        TypeSpecifier::Long => println!("long"),
+        TypeSpecifier::UnsignedLong => println!("unsigned long"),
+        TypeSpecifier::LongLong => println!("long long"),
+        TypeSpecifier::UnsignedLongLong => println!("unsigned long long"),
+        TypeSpecifier::Float => println!("float"),
+        TypeSpecifier::Double => println!("double"),
+        TypeSpecifier::LongDouble => println!("long double"),
+        TypeSpecifier::Void => println!("void"),
+        TypeSpecifier::None => println!("no type specifier"),
+        TypeSpecifier::Struct { declaration_list, is_union, name } => {
+
+            if is_union {
+                print!("union ")
+            } else {
+                print!("struct ")
+            }
+
+            if let Some(name) = name {
+                println!("{}", name)
+            } else {
+                println!("anonymous ")
+            }
+            //let specifier_prefix = print_ast_prefix(list_prefix.clone(), is_last)
+            let print_struct_declaration = |declaration : &StructDeclarationNode, prefix : String, is_last : bool | {
+                print_ast_specifiers(declaration.specifiers, prefix.clone(), is_last);
+                print_ast_list(declaration.struct_declarator_list, prefix, true, |_, _, _| ());
+            };
+
+            if let Some(declaration_list) = declaration_list {
+                print_ast_list(declaration_list, specifiers_prefix.clone(), is_last, print_struct_declaration);
+            }
+        }
+
+        TypeSpecifier::Enum { enumerator_list, name } => {
+
+            if let Some(name) = name {
+                println!("enum {:?}", name)
+            } else {
+                println!("enum anonymous")
+            }
+            
+            if let Some(enumerator_list) = enumerator_list {
+                let print_enumerator = |enumerator: &Enumerator, prefix : String, is_last : bool | {
+                    print_ast_prefix(prefix.clone(), is_last);
+                    if let Some(val) = enumerator.val {
+                        println!("\x1b[1;90m{}\x1b[0m = \x1b[1;35m{}\x1b[0m", enumerator.name, val);
+                    } else {                           
+                        println!("\x1b[1;90m{}\x1b[0m, no val.", enumerator.name);
+                    }
                 };
 
-                if let Some(declaration_list) = declaration_list {
-                    print_ast_list(declaration_list.iter(), list_prefix.clone(), is_last, true, print_struct_declaration);
-                }
+                print_ast_list(enumerator_list, specifiers_prefix, is_last, print_enumerator);
             }
-
-            TypeSpecifier::Enum { enumerator_list, .. } => {
-                if let Some(enumerator_list) = enumerator_list {
-                    print_ast_list(*enumerator_list, list_prefix, is_last, true, |_, _, _| ());
-                }
-            }
-            _ => return,
         }
-    };
-    print_specifier(&specifiers_node.type_specifier, specifiers_prefix, true);
-    //print_ast_list(specifiers_node.specifiers.iter(), specifiers_prefix, true, true, print_specifier);
+    }
 }
 
 pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
     let new_prefix = print_ast_prefix(prefix, is_last);
-    println!("{}", start);
+    //println!("{}", start);
 
     let print_child = |child : &Node| {
         print_ast(child, new_prefix.clone(), false);
@@ -264,54 +199,67 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
     match *start {
         
         Node::FunctionDefinition{ declaration_specifiers, declarator, compound_statement} => {
+            
+            println!("{}", yellow!("Function Definition"));
             print_ast_specifiers(declaration_specifiers, new_prefix.clone(), false);
 
-            print_ast_prefix(new_prefix.clone(), false);
-            println!("{declarator}");
-
+            print_declarator(declarator, new_prefix.clone(), false);           
             print_last_child(compound_statement);
         }
 
         Node::CompoundStatement{declaration_list, statement_list} => {
+            println!("Compound Statement");
             print_child(declaration_list);
             print_ast(statement_list, new_prefix, true);
         }
 
-        // quite possibly the coolest Rust syntax I have encountered so far
         Node::DeclarationList(list) | Node::StatementList(list) | Node::InitializerList(list) | Node::TranslationalUnit { external_declarations: list @ _ }=> {
-            print_ast_list(list, new_prefix.clone(), true, false, |child, list_prefix, is_last| print_ast(child, list_prefix, is_last));
+            match *start {
+                Node::DeclarationList(_) => println!("{}", cyan!("Declaration List ")),
+                Node::StatementList(_) => println!("{}", red!("Statement List")),
+                Node::InitializerList(_) => println!("Initializer List"),
+                Node::TranslationalUnit{..} => println!("{}", yellow!("Translational Unit")),
+                _ => panic!("Unreachable"),
+            }
+            print_ast_list(list, new_prefix.clone(), true, print_ast);
         }
 
         Node::InitDeclaratorList(list) => {
-            print_ast_list(list, new_prefix.clone(), true, false, |child, list_prefix, is_last| print_ast(&Node::InitDeclarator(child), list_prefix, is_last));
-        }
+            println!("Init Declarator List");
+            let print_init_declarator = |init_declarator: &InitDeclaratorNode, prefix: String, is_last : bool| {
+                
+                let init_decl_prefix = print_ast_prefix(prefix.clone(), is_last);
+                println!("Init Declarator");
 
-        Node::InitDeclarator(node) => {
-            print_ast_prefix(new_prefix.clone(), false);
-            println!("{}", node.declarator);
-            print_last_child(node.initializer);
+                print_declarator(init_declarator.declarator, init_decl_prefix.clone(), false);
+                print_ast(init_declarator.initializer, init_decl_prefix.clone(), true);
+            };
+            print_ast_list(list, new_prefix.clone(), true, print_init_declarator);
         }
 
         Node::IfStatementList(list) => {
-
-            let print_if_statement = |child : &&IfNode, child_prefix : String, _ : bool | {
+            println!("{}", red!("If Statement List"));
+            let print_if_statement = |child : &IfNode, child_prefix : String, _ : bool | {
                 print_ast(child.condition, child_prefix.clone(), false);
                 print_ast(child.statement, child_prefix, true); 
             };
-            print_ast_list(list, new_prefix.clone(), true, true, print_if_statement); 
+            print_ast_list(list, new_prefix.clone(), true, print_if_statement); 
         }
 
         Node::WhileStatement { condition, statement } => {
+            println!("{}", red!("While Statement"));
             print_child(condition);
             print_last_child(statement); 
         }
 
         Node::DoWhileStatement { statement, condition } => {
+            println!("{}", red!("Do While Statement"));
             print_child(statement); 
             print_last_child(condition);
         }
 
         Node::ForStatement { init_statement, condition, iter_statement, statement } => {
+            println!("{}", red!("For Statement"));
             print_child(init_statement);
             print_child(condition); 
             print_child(iter_statement);
@@ -319,34 +267,60 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
         }
 
         Node::FunctionCall { function, arguments } => {
+            println!("Function Call");
             print_ast(function, new_prefix.clone(), false);
-            print_ast_list(arguments, new_prefix.clone(), true, false, |child, list_prefix, is_last| print_ast(child, list_prefix, is_last));
+            print_ast_list(arguments, new_prefix.clone(), true, print_ast);
         }
 
         Node::ArrayIndex { lvalue, index } => {
+            println!("Array Index");
             print_child(lvalue);
             print_last_child(index);
         }
 
         Node::Return { expression } => {
+            println!("{}", red!("Return"));
             print_ast(expression, new_prefix, true);
         }
 
-        Node::Empty | Node::Identifier{..} | Node::Literal(_) => {
-            return;
+        Node::Empty => {
+            println!("{}", b_black!("Empty"));             
         }
-        Node::Infix{ left, right, .. } => {
+
+        Node::Identifier{ name } => {
+            println!("\x1b[1;90m{}\x1b[0m", name); 
+        } 
+        
+        Node::Literal(lit) => {
+            print!("\x1b[1;35m");
+            match lit.token_type {
+                TokenType::IntegerLiteral(val) => print!("{}", val), 
+                TokenType::DoubleLiteral(val) => print!("{}", val),
+                TokenType::FloatLiteral(val) => print!("{}", val),
+                TokenType::StringLiteral(val) => print!("{}", val),
+                _ => ()
+            }
+            println!("\x1b[0m");
+        }
+
+        Node::Infix{ operator, left, right } => {
+            println!("I{:?}", operator.token_type);
             print_child(left);
             print_last_child(right);
         }
+
         Node::Prefix(node) => {
+            println!("Prefix {:?}", node.operator.token_type);
             print_last_child(node.operand);
         }
+
         Node::Postfix(node) => {
+            println!("Postfix {:?}", node.operator.token_type);
             print_last_child(node.operand);
         }
 
         Node::Declaration{ declaration_specifiers, init_declarator_list} => {
+            println!("{}", cyan!("Declaration"));
             print_ast_specifiers(declaration_specifiers, new_prefix.clone(), false);
             print_last_child(init_declarator_list);
         }
