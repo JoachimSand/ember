@@ -1,6 +1,7 @@
 use crate::lexer::*;
 use crate::arena::*;
 use crate::compile::CompilationError;
+use crate::typechecker::{Type, TypeAlias};
 
 // TODO: Consider if all these tokens should contain Token or TokenType.
 // Do we need debugging information in the built/fully parsed AST? 
@@ -43,6 +44,7 @@ pub enum TypeSpecifier<'n> {
     Double,
     LongDouble,
     Void,
+    TypeAlias(&'n TypeAlias<'n>),
     
     Enum { 
         name: Option<&'n str>, 
@@ -68,12 +70,6 @@ pub struct Specifiers<'n> {
     pub is_static : bool,
 
     pub type_specifier : TypeSpecifier<'n>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum DeclarationSpecifiers<'n> {
-    Typedef{ typename : &'n str, type_specification : Specifiers<'n>},
-    TypeSpecification(Specifiers<'n>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -124,7 +120,6 @@ pub enum Node<'n> {
     StatementList(&'n [&'n Node<'n>]),
 
     Declaration{ declaration_specifiers : &'n Specifiers<'n>, init_declarator_list : &'n Node<'n>},
-    InitDeclarator(&'n InitDeclaratorNode<'n>),
     InitDeclaratorList(&'n [&'n InitDeclaratorNode<'n>]),
     InitializerList(&'n [&'n Node<'n>]),
 
@@ -502,13 +497,13 @@ fn eval_const_expression<'e>(node : &Node) -> Result<i64, CompilationError<'e>> 
 //	: specifier_qualifier_list struct_declarator_list ';'
 fn parse_struct_declaration<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena StructDeclarationNode<'arena>, CompilationError<'arena>> {
     let specifiers = parse_specifier_qualifier_list(lexer, arena)?;
-
-    let declarator = parse_declarator(lexer, arena, false)?;
+    
+    let declarator = parse_declarator(lexer, arena, specifiers, false)?;
     let mut declarator_list = vec![declarator];
 
     while let TokenType::Comma = peek_token(lexer)?.token_type {
         next_token(lexer)?;
-        declarator_list.push(parse_declarator(lexer, arena, false)?);
+        declarator_list.push(parse_declarator(lexer, arena, specifiers, false)?);
     }
 
     expect_token(lexer, TokenType::Semicolon)?;
@@ -679,7 +674,7 @@ fn parse_specifier_qualifier_list<'arena>(lexer : &mut Lexer<'arena>, arena : &'
 // 	| type_qualifier declaration_specifiers
 
 macro_rules! TYPE_STARTER {
-    () => (TokenType::Void | TokenType::Char | TokenType::Short | TokenType::Int | TokenType::Long | TokenType::Float | TokenType::Double | TokenType::Signed | TokenType::Unsigned);
+    () => (TokenType::Void | TokenType::Char | TokenType::Short | TokenType::Int | TokenType::Long | TokenType::Float | TokenType::Double | TokenType::Signed | TokenType::Unsigned | TokenType::TypeName(_));
 }
 
 macro_rules! TYPE_SPECIFIER_STARTER {
@@ -694,8 +689,9 @@ macro_rules! DECLARATION_SPECIFIER_STARTER {
 
 
 // TODO: While the error messages showing which specifiers cannot be combined is quite nice,
-// it does complicate this code somewhat. Using bools instead of tokens would slightly
-fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, parse_storage_specifiers : bool) -> Result<&'arena Specifiers<'arena>, CompilationError<'arena>> {
+// it does complicate this code somewhat. Using bools instead of tokens would slightly simplify things.
+fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, parse_storage_specifiers : bool) -> Result<&'arena Specifiers<'arena>, CompilationError<'arena>> 
+{
 
     let mut specifiers = Specifiers {
         is_const : false,
@@ -719,6 +715,7 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
     let mut void_t : Option<Token> = None;    
     let mut enum_t : Option<Token> = None;
     let mut struct_or_union_t : Option<Token> = None;
+    let mut type_name_t : Option<Token> = None;
 
     let mut typedef_token : Option<Token> = None;
     let mut extern_token : Option<Token> = None;
@@ -816,7 +813,11 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
             TokenType::Void => {
                 set_specifier_token(lexer, &mut void_t, true)
             }
-                     
+
+            TokenType::TypeName(_) => {
+                set_specifier_token(lexer, &mut type_name_t, true)
+            }
+                      
             TokenType::Struct | TokenType::Union => {
                 set_specifier_token(lexer, &mut struct_or_union_t, false)?;
                 specifiers.type_specifier = parse_struct_or_union_specifier(lexer, arena)?;
@@ -851,30 +852,30 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
         (None, None, Some(_)) => specifiers.is_typedef = true,
         (Some(s), Some(e), _) | (Some(s), _, Some(e)) => 
             return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: e, specifier: s }),
-        (Some(e), _, Some(t)) | (_, Some(e), Some(t)) =>
+         (_, Some(e), Some(t)) =>
             return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: e, specifier: t }),
         (None, None, None) => (),
     }
 
     // Convert the type specifiers to a single type specifier
-    match (unsigned_t, signed_t, char_t, short_t, int_t, long_t, float_t, double_t, void_t, enum_t, struct_or_union_t) {
+    match (unsigned_t, signed_t, char_t, short_t, int_t, long_t, float_t, double_t, void_t, enum_t, struct_or_union_t, type_name_t) {
         (Some(u), Some(s), ..) => return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: u, specifier: s }),
 
         // Chars (signed is default)
-        (None,    _,        Some(_c), None,     None,     None,     None,     None,     None,     None,    None) => specifiers.type_specifier = TypeSpecifier::SignedChar, 
-        (Some(_u),None,     Some(_c), None,     None,     None,     None,     None,     None,     None,    None) => specifiers.type_specifier = TypeSpecifier::UnsignedChar, 
+        (None,    _,        Some(_c), None,     None,     None,     None,     None,     None,     None,    None,    None) => specifiers.type_specifier = TypeSpecifier::SignedChar, 
+        (Some(_u),None,     Some(_c), None,     None,     None,     None,     None,     None,     None,    None,    None) => specifiers.type_specifier = TypeSpecifier::UnsignedChar, 
                 
         // Short
-        (None,    _,        None,    Some(_s),  None,     None,     None,     None,     None,     None,    None) => specifiers.type_specifier = TypeSpecifier::Short,        
-        (Some(_u),None,     None,    Some(_s),  None,     None,     None,     None,     None,     None,    None) => specifiers.type_specifier = TypeSpecifier::UnsignedShort,
+        (None,    _,        None,    Some(_s),  None,     None,     None,     None,     None,     None,    None,    None) => specifiers.type_specifier = TypeSpecifier::Short,        
+        (Some(_u),None,     None,    Some(_s),  None,     None,     None,     None,     None,     None,    None,    None) => specifiers.type_specifier = TypeSpecifier::UnsignedShort,
 
         // Int. 
-        (None,    _,        None,    None,     Some(_),  None,     None,     None,     None,     None,    None) |         
-        (None,    Some(_),  None,    None,     None,     None,     None,     None,     None,     None,    None) => specifiers.type_specifier = TypeSpecifier::Int,
-        (Some(_u),None,     None,    None,     _,        None,     None,     None,     None,     None,    None) => specifiers.type_specifier = TypeSpecifier::UnsignedInt,
+        (None,    _,        None,    None,     Some(_),  None,     None,     None,     None,     None,    None,     None) |         
+        (None,    Some(_),  None,    None,     None,     None,     None,     None,     None,     None,    None,     None) => specifiers.type_specifier = TypeSpecifier::Int,
+        (Some(_u),None,     None,    None,     _,        None,     None,     None,     None,     None,    None,     None) => specifiers.type_specifier = TypeSpecifier::UnsignedInt,
 
         // Long
-        (None,    _,        None,    None,     _,        Some(_l), None,     None,     None,     None,    None) => {
+        (None,    _,        None,    None,     _,        Some(_l), None,     None,     None,     None,    None,     None) => {
             if long_token_count == 1 {
                 specifiers.type_specifier = TypeSpecifier::Long;
             } else {
@@ -882,7 +883,7 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
             }
         }
 
-        (Some(_u),None,     None,    None,     _,        Some(_l), None,     None,     None,     None,    None) => {
+        (Some(_u),None,     None,    None,     _,        Some(_l), None,     None,     None,     None,    None,    None) => {
             if long_token_count == 1 {
                 specifiers.type_specifier = TypeSpecifier::UnsignedLong;
             } else {
@@ -890,10 +891,10 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
             }
         }
 
-        (None,    None,     None,    None,     None,     None,     Some(_f), None,     None,     None,    None) => specifiers.type_specifier = TypeSpecifier::Float,
+        (None,    None,     None,    None,     None,     None,     Some(_f), None,     None,     None,    None,    None) => specifiers.type_specifier = TypeSpecifier::Float,
 
-        (None,    None,     None,    None,     None,     None,     None,     Some(_d), None,     None,    None) => specifiers.type_specifier = TypeSpecifier::Double,
-        (None,    None,     None,    None,     None,     Some(l),  None,     Some(d),  None,     None,    None) => {
+        (None,    None,     None,    None,     None,     None,     None,     Some(_d), None,     None,    None,    None) => specifiers.type_specifier = TypeSpecifier::Double,
+        (None,    None,     None,    None,     None,     Some(l),  None,     Some(d),  None,     None,    None,    None) => {
             if long_token_count == 1 {
                 specifiers.type_specifier = TypeSpecifier::LongDouble;
             } else {
@@ -901,12 +902,23 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
             }
         }
         
-        (None,    None,     None,    None,     None,     None,     None,     None,     Some(_v), None,    None) => specifiers.type_specifier = TypeSpecifier::Void,
+        (None,    None,     None,    None,     None,     None,     None,     None,     Some(_v), None,    None,    None) => specifiers.type_specifier = TypeSpecifier::Void,
+
+        (None,    None,     None,    None,     None,     None,     None,     None,     None,     None,    None,    Some(t)) => {
+            if let TokenType::TypeName(ta) = t.token_type {
+                specifiers.type_specifier = TypeSpecifier::TypeAlias(ta);
+                specifiers.is_const |= ta.alias.specifiers.is_const;
+                specifiers.is_volatile |= ta.alias.specifiers.is_volatile;
+            } else {
+                panic!("Internal Compiler Error: Token type should never not resolve to type")
+            }
+        }
                 
         (Some(s), None,     ..) |
         (None,    Some(s),  ..) => {
             // Capture all the cases where unsigned/signed should not be used
-            let tokens = [float_t, double_t, void_t, enum_t, struct_or_union_t];
+            // TODO: Unique error for trying to add types to an already type-defed type?
+            let tokens = [float_t, double_t, void_t, enum_t, struct_or_union_t, type_name_t];
             for t in tokens {
                 if let Some(t) = t {
                     return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: s, specifier: t })                
@@ -916,13 +928,13 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
 
 
         // For structs and enums the type specifier has already been set.
-        (.., Some(_), None) |  (.., None, Some(_))=> {
+        (.., Some(_), None, None) |  (.., None, Some(_), None)=> {
             ()
         }
 
         (None,    None,     Some(c), ..) => {
             // Capture all the cases where char should not be used
-            let tokens = [short_t, int_t, long_t, float_t, double_t, void_t, enum_t, struct_or_union_t];
+            let tokens = [short_t, int_t, long_t, float_t, double_t, void_t, enum_t, struct_or_union_t, type_name_t];
             for t in tokens {
                 if let Some(t) = t {
                     return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: c, specifier: t })                
@@ -932,7 +944,7 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
 
         (None,    None,     None,    Some(s), ..) => {
             // Capture all the cases where short should not be used
-            let tokens = [long_t, float_t, double_t, void_t, enum_t, struct_or_union_t];
+            let tokens = [long_t, float_t, double_t, void_t, enum_t, struct_or_union_t, type_name_t];
             for t in tokens {
                 if let Some(t) = t {
                     return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: s, specifier: t })                
@@ -942,7 +954,7 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
         
         (None,    None,     None,    None,    Some(i), ..) => {
             // Capture all the cases where int should not be used
-            let tokens = [float_t, double_t, void_t, enum_t, struct_or_union_t];
+            let tokens = [float_t, double_t, void_t, enum_t, struct_or_union_t, type_name_t];
             for t in tokens {
                 if let Some(t) = t {
                     return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: i, specifier: t })                
@@ -953,7 +965,7 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
         
         (None,    None,     None,    None,    None,     Some(l), ..) => {
             // Capture all the cases where long should not be used
-            let tokens = [float_t, double_t, void_t, enum_t, struct_or_union_t];
+            let tokens = [float_t, double_t, void_t, enum_t, struct_or_union_t, type_name_t];
             for t in tokens {
                 if let Some(t) = t {
                     return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: l, specifier: t })                
@@ -963,7 +975,7 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
 
         (None,    None,     None,    None,    None,     None,    Some(f), ..) => {
             // Capture all the cases where float should not be used
-            let tokens = [double_t, void_t, enum_t, struct_or_union_t];
+            let tokens = [double_t, void_t, enum_t, struct_or_union_t, type_name_t];
             for t in tokens {
                 if let Some(t) = t {
                     return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: f, specifier: t })                
@@ -973,7 +985,7 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
         
         (None,    None,     None,    None,    None,     None,    None,    Some(d), ..) => {
             // Capture all the cases where double should not be used
-            let tokens = [void_t, enum_t, struct_or_union_t];
+            let tokens = [void_t, enum_t, struct_or_union_t, type_name_t];
             for t in tokens {
                 if let Some(t) = t {
                     return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: d, specifier: t })                
@@ -983,18 +995,28 @@ fn parse_declaration_specifiers<'arena>(lexer : &mut Lexer<'arena>, arena : &'ar
 
         (None,    None,     None,    None,    None,     None,    None,    None,    Some(v), ..) => {
             // Capture all the cases where void should not be used
-            let tokens = [enum_t, struct_or_union_t];
+            let tokens = [enum_t, struct_or_union_t, type_name_t];
             for t in tokens {
                 if let Some(t) = t {
                     return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: v, specifier: t })                
                 }
             }     
         }
-        (None,    None,     None,    None,     None,     None,     None,     None,     None,     Some(e),    Some(s)) => {
-            return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: e, specifier: s })                
+        (None,    None,     None,    None,     None,     None,     None,     None,     None,     Some(e), ..) => {
+            // Capture all the cases where enum should not be used
+            let tokens = [struct_or_union_t, type_name_t];
+            for t in tokens {
+                if let Some(t) = t {
+                    return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: e, specifier: t })                
+                }
+            }     
         }
 
-        (None,    None,     None,    None,     None,     None,     None,     None,     None,     None,    None) => panic!("Not covered"),
+        (None,    None,     None,    None,     None,     None,     None,     None,     None,     None,    Some(s), Some(t)) => { 
+            return Err(CompilationError::CannotCombineDeclarationSpecifiers { prev_specifier: s, specifier: t })                
+        }
+
+        (None,    None,     None,    None,     None,     None,     None,     None,     None,     None,    None,    None) => panic!("Not covered"),
         
     }  
 
@@ -1019,8 +1041,7 @@ fn parse_parameter_declaration<'arena>(lexer : &mut Lexer<'arena>, arena : &'are
     let declarator = match peek_token(lexer)?.token_type {
         TokenType::Comma | TokenType::RParen => None,
         _ => {
-            let declarator = parse_declarator(lexer, arena, true)?;
-            let declarator_node = arena.push(declarator)?;
+            let declarator = parse_declarator(lexer, arena, declaration_specifiers, true)?;
             Some(declarator)
         }
     };
@@ -1142,7 +1163,7 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Lexer<'arena>, arena : &'aren
         let cur_token = peek_token(lexer)?;
         match cur_token.token_type {
             TokenType::Identifier(id_name) => {
-                next_token(lexer);
+                next_token(lexer)?;
                 *name = Some(id_name);
             }
             TokenType::LBracket => (),
@@ -1209,7 +1230,7 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Lexer<'arena>, arena : &'aren
                 let l_paren = next_token(lexer)?;
 
                 if let TokenType::RParen = peek_token(lexer)?.token_type {
-                    next_token(lexer);
+                    next_token(lexer)?;
                     derived_types.push(DerivedType::FunctionParameterless);
                 } else {
                     let param_list_res = parse_parameter_type_list(lexer, arena);
@@ -1241,14 +1262,20 @@ fn parse_declarator_recursive<'arena>(lexer : &mut Lexer<'arena>, arena : &'aren
     return Ok(());
 }
 
-fn parse_declarator<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, can_be_abstract : bool) -> Result<&'arena DeclaratorNode<'arena>, CompilationError<'arena>> {
+fn parse_declarator<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, specifiers : &'arena Specifiers, can_be_abstract : bool) -> Result<&'arena DeclaratorNode<'arena>, CompilationError<'arena>> {
     let mut name = None;
-    let mut derived_types_list : Vec<DerivedType> = Vec::new();
+    
+    // If the specifiers contained a typedef'ed type, we need to take 
+    // into account any derived types it may have.
+    let mut derived_types = match specifiers.type_specifier {
+        TypeSpecifier::TypeAlias(type_alias) => type_alias.alias.derived_types.to_vec(),
+        _ => Vec::new(),
+    };
 
-    parse_declarator_recursive(lexer, arena, can_be_abstract, &mut derived_types_list, &mut name)?;
+    parse_declarator_recursive(lexer, arena, can_be_abstract, &mut derived_types, &mut name)?;
     //println!("Declarator {:?}, {:?}", name, derived_types_list);
 
-    let derived_types = arena.push_slice_copy(&derived_types_list[..])?;
+    let derived_types = arena.push_slice_copy(&derived_types[..])?;
     let declarator = arena.push(DeclaratorNode{name, derived_types})?;
     return Ok(declarator);
 }
@@ -1301,8 +1328,8 @@ fn parse_initializer<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) 
 //	: declarator
 //	| declarator '=' initializer
 //	;
-fn parse_init_declarator<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena InitDeclaratorNode<'arena>, CompilationError<'arena>> {
-    let declarator = parse_declarator(lexer, arena, false)?;
+fn parse_init_declarator<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, specifiers : &'arena Specifiers) -> Result<&'arena InitDeclaratorNode<'arena>, CompilationError<'arena>> {
+    let declarator = parse_declarator(lexer, arena, specifiers, false)?;
     match peek_token(lexer)?.token_type {
         TokenType::Assign => {
             next_token(lexer)?;
@@ -1322,13 +1349,13 @@ fn parse_init_declarator<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Are
 //init_declarator_list
 //	: init_declarator
 //	| init_declarator_list ',' init_declarator
-fn parse_init_declarator_list<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
+fn parse_init_declarator_list<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, specifiers: &'arena Specifiers) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     // TODO: Implement init_declarator_list
-    let init_declarator = parse_init_declarator(lexer, arena)?;
+    let init_declarator = parse_init_declarator(lexer, arena, specifiers)?;
     let mut list = vec![init_declarator];
     while let TokenType::Comma = peek_token(lexer)?.token_type {
         next_token(lexer)?;
-        list.push(parse_init_declarator(lexer, arena)?);
+        list.push(parse_init_declarator(lexer, arena, specifiers)?);
     }
 
     let list = arena.push_slice_copy(&list[..])?;
@@ -1348,7 +1375,7 @@ pub fn parse_declaration<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Are
     if TokenType::Semicolon == peek_token(lexer)?.token_type { 
         init_declarator_list = arena.push(Node::Empty)?;
     } else {
-        init_declarator_list = parse_init_declarator_list(lexer, arena)?;
+        init_declarator_list = parse_init_declarator_list(lexer, arena, declaration_specifiers)?;
 
         if declaration_specifiers.is_typedef {
             
@@ -1364,8 +1391,13 @@ pub fn parse_declaration<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Are
                         _ => return Err(CompilationError::IllegalInitializer { identifier_name: init_decl.declarator.name.unwrap() }),
                     }
 
-                    //init_decl.declarator.
+                    let derived_types = init_decl.declarator.derived_types;
+                    let typedef_type = Type { specifiers : declaration_specifiers, derived_types };
+                    let alias = TypeAlias { name : init_decl.declarator.name.unwrap(), alias : typedef_type};
                     
+                    
+                    lexer.type_aliases.push(arena.push(alias)?);
+                    println!("{:?}", lexer.type_aliases);
                 }
             }
         }
@@ -1385,25 +1417,6 @@ pub fn parse_declaration<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Are
 //	: declaration
 //	| declaration_list declaration
 //	;
-fn parse_declaration_list<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
-    let declaration = parse_declaration(lexer, arena, true)?;
-    let mut list = vec![declaration]; 
-
-    // Keep pushing declarations untill we encounter an error 
-    loop {
-        match parse_declaration(lexer, arena, true) {
-            Ok(node) => {
-                list.push(node);
-            }
-            Err(_) => {
-                let declarations = arena.push_slice_copy(&list[..])?;
-                let node = Node::DeclarationList(declarations);
-                return Ok(arena.push(node)?);
-            }
-        }
-    }
-}
-
 
 pub fn parse_expr_statement<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
     match peek_token(lexer)?.token_type {
@@ -1597,25 +1610,6 @@ pub fn parse_statement<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena
         _ => {
             // No applicable keywords encountered, try parsing expression
             return parse_expr_statement(lexer, arena);
-        }
-    }
-}
-
-
-fn parse_statement_list<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
-    let statement = parse_statement(lexer, arena)?;
-    let mut list = vec![statement]; 
-
-    loop { 
-        match parse_statement(lexer, arena) {
-            Ok(node) => {
-                list.push(node);
-            }
-            Err(_) => {
-                let statements = arena.push_slice_copy(&list[..])?;
-                let node = arena.push(Node::StatementList(statements))?;
-                return Ok(node);
-            }
         }
     }
 }

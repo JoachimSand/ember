@@ -1,5 +1,3 @@
-use std::fmt;
-use std::fmt::write;
 use std::println;
 
 use crate::parser::*;
@@ -107,6 +105,9 @@ pub fn print_ast_list<'e, T : 'e, F: Fn(&T, String, bool)>(node_list : &[&T], pr
 pub fn print_ast_specifiers(specifiers_node : &Specifiers, prefix : String, is_last : bool){
     let specifiers_prefix = print_ast_prefix(prefix.clone(), is_last);
 
+    if specifiers_node.is_typedef {
+        print!("typedef ");
+    }
     if specifiers_node.is_const {
         print!("const ");
     }
@@ -135,6 +136,7 @@ pub fn print_ast_specifiers(specifiers_node : &Specifiers, prefix : String, is_l
         TypeSpecifier::Double => println!("double"),
         TypeSpecifier::LongDouble => println!("long double"),
         TypeSpecifier::Void => println!("void"),
+        TypeSpecifier::TypeAlias(ta) => println!("\x1b[1;35m{}\x1b[0m", ta.name),
         TypeSpecifier::None => println!("no type specifier"),
         TypeSpecifier::Struct { declaration_list, is_union, name } => {
 

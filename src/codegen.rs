@@ -159,9 +159,9 @@ fn codegen_compound_stmt<'s, 'n : 's>(scope_stack : &'s mut RegScopeStack<'n>, c
                 if let Node::Declaration { declaration_specifiers, init_declarator_list } = *declaration {
                     // TODO: Here we are assuming all type declarations are of type integer.
 
-                    if let Node::InitDeclarator(init_declarator) = *init_declarator_list {
-                        let reg = add_var_reg(scope_stack, init_declarator.declarator.name);
-                        codegen_expr(scope_stack, reg, &mut block.instructions, init_declarator.initializer)?;
+                    if let Node::InitDeclaratorList(init_declarator) = *init_declarator_list {
+                        //let reg = add_var_reg(scope_stack, init_declarator.declarator.name);
+                        //codegen_expr(scope_stack, reg, &mut block.instructions, init_declarator.initializer)?;
                     } else {
                         return Err(CompilationError::NotImplemented);
                     }

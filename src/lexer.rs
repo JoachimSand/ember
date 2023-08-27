@@ -2,6 +2,7 @@ use std::iter::Peekable;
 use std::str::Chars;
 
 use crate::arena::*;
+use crate::typechecker::TypeAlias;
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -20,6 +21,7 @@ pub struct Pos {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TokenType<'t> {
     Identifier(&'t str),
+    TypeName(&'t TypeAlias<'t>),
 
     IntegerLiteral(i64),
     FloatLiteral(f32),
@@ -159,6 +161,9 @@ pub struct Lexer<'input> {
     cur_line_start : usize,   
 
     peek_token : Option<Token<'input>>,
+
+    // Types defined by typedef
+    pub type_aliases : Vec<&'input TypeAlias<'input>>,
 }
 
 
@@ -230,7 +235,8 @@ impl <'input> Lexer<'input> {
     pub fn new(input : &'input str, arena : &'input Arena) -> Self {
         Lexer {
             input, char_stream : input.chars().peekable(), arena,
-            lines : Vec::new(), cur_line_start : 0, char_pos : 0, peek_token : None
+            lines : Vec::new(), cur_line_start : 0, char_pos : 0, peek_token : None,
+            type_aliases : Vec::new()
         }
     }
 
@@ -315,6 +321,16 @@ impl <'input> Lexer<'input> {
                     "while" => return Some(TokenType::While),
 
                     _ => {
+                        // If the string of characters is not keyword, the only other option is
+                        // a previously defined type or else an identifier.
+
+
+                        for alias in &self.type_aliases {
+                            if alias.name == identifier_string {
+                                return Some(TokenType::TypeName(alias));
+                            }
+                        }
+                        
                         let identifier = self.arena.push_str(identifier_string.as_str()).unwrap();
                         return Some(TokenType::Identifier(identifier));
                     }
