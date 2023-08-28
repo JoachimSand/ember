@@ -23,7 +23,14 @@ pub enum TokenType<'t> {
     Identifier(&'t str),
     TypeName(&'t TypeAlias<'t>),
 
-    IntegerLiteral(i64),
+    IntLiteral(i32),
+    LongLiteral(i64),
+    //LongLongLiteral(i64),
+
+    UIntLiteral(u32),
+    ULongLiteral(u64),
+    //ULongLongLiteral(u64),
+
     FloatLiteral(f32),
     DoubleLiteral(f64),
     StringLiteral(&'t str),
@@ -365,35 +372,137 @@ impl <'input> Lexer<'input> {
                 let num_literal_str = &mut String::new();
                 num_literal_str.push(first_char);
 
+                let mut is_hex = false; 
+                if first_char == '0' {
+                    if let Some('x') = self.peek_char() {
+                        num_literal_str.push(self.next_char().unwrap());
+                        is_hex = true;
+                    }
+                }
+
                 enum LiteralType {
-                    Int,
+                    UnsuffixedDecimal,
+                    UnsuffixedHex,
+                    SuffixedU,
+                    SuffixedL,
+                    SuffixedBoth,
                     Float,
                     Double,
                 }
 
-                let mut l_type = LiteralType::Int;
+                let mut l_type = LiteralType::UnsuffixedDecimal;
+                
 
                 while let Some(c) = self.peek_char() {
-                    if c.is_ascii_digit() || matches!(c, '.') {
-                        num_literal_str.push(*c); 
-                        
-                        if *c == '.' {
-                            l_type = LiteralType::Double;
-                        }
-                        self.next_char();
-                    } else {
-                        if *c == 'f' {
-                            self.next_char();
+                    match *c {
+                        '0'|'1'|'2'|'3'|'4'|'5'|'6'|'7'|'8'|'9'  => num_literal_str.push(*c),
+                        '.' => {
+                            num_literal_str.push(*c);
                             l_type = LiteralType::Float;
                         }
-                        break;
+                        'u' | 'U' => {
+                            self.next_char();
+                            if let Some('l' | 'L') = self.peek_char() {
+                                self.next_char();
+                                l_type = LiteralType::SuffixedBoth;
+                            } else {
+                                l_type = LiteralType::SuffixedU;
+                            }
+                            break;
+                        }
+
+                        'l' | 'L' => {
+                            self.next_char();
+                            if let LiteralType::Float = l_type {
+                                l_type = LiteralType::Double;
+                            } else {
+                                if let Some('u' | 'U') = self.peek_char() {
+                                    self.next_char();
+                                    l_type = LiteralType::SuffixedBoth;
+                                } else {
+                                    l_type = LiteralType::SuffixedL;
+                                }
+                            }
+                            
+                            break;
+                        }
+
+                        'f' | 'F' => {
+                            l_type = LiteralType::Float;
+                            break;
+                        }
+
+
+                        _ => break,
                     }
+                    self.next_char();
                 }
 
+                // From the C standard:
+
+                // The type of an integer constant is the first of the corresponding list in which its value can be represented: 
+                // Unsuffixed decimal: int, long int, unsigned long int; 
+                // unsuffixed octal or hexadecimal: int, unsigned int, long int, unsigned long int; 
+                // suffixed by the letter u or U: unsigned int, unsigned long int; 
+                // suffixed by the letter l or L: long int, unsigned long int; 
+                // suffixed by both the letters u or U and l or L: unsigned long int . 
+
                 match l_type {
-                    LiteralType::Int => return Some(TokenType::IntegerLiteral(num_literal_str.parse().ok()?)),
-                    LiteralType::Float => return Some(TokenType::FloatLiteral(num_literal_str.parse::<f32>().ok()?)),
-                    LiteralType::Double => return Some(TokenType::DoubleLiteral(num_literal_str.parse::<f64>().ok()?))
+                    LiteralType::UnsuffixedDecimal => {
+                        if let Ok(i) = num_literal_str.parse::<i32>() {
+                            return Some(TokenType::IntLiteral(i));
+                        } else if let Ok(i) = num_literal_str.parse::<i64>() {
+                            return Some(TokenType::LongLiteral(i));
+                        } else if let Ok(i) = num_literal_str.parse::<u64>() {
+                            return Some(TokenType::ULongLiteral(i));
+                        } else {
+                            panic!("Integer literal {num_literal_str} malformed or too large");
+                        }
+                    }
+                    LiteralType::UnsuffixedHex => {
+                        panic!("Hex Not implemented")
+                    }
+                    LiteralType::SuffixedU => {
+                        if let Ok(i) = num_literal_str.parse::<u32>() {
+                            return Some(TokenType::UIntLiteral(i));
+                        } else if let Ok(i) = num_literal_str.parse::<u64>() {
+                            return Some(TokenType::ULongLiteral(i));
+                        } else {
+                            panic!("Integer literal {num_literal_str} malformed or too large");
+                        }
+                    }
+                    LiteralType::SuffixedL => {
+                        if let Ok(i) = num_literal_str.parse::<i64>() {
+                            return Some(TokenType::LongLiteral(i));
+                        } else if let Ok(i) = num_literal_str.parse::<u64>() {
+                            return Some(TokenType::ULongLiteral(i));
+                        } else {
+                            panic!("Integer literal {num_literal_str} malformed or too large");
+                        }
+                    }
+                    LiteralType::SuffixedBoth => {
+                        if let Ok(i) = num_literal_str.parse::<u64>() {
+                            return Some(TokenType::ULongLiteral(i));
+                        } else {
+                            panic!("Integer literal {num_literal_str} malformed or too large");
+                        }
+                    }
+                    LiteralType::Float => {
+                        if let Some(lit) = num_literal_str.parse::<f32>().ok() {
+                            return Some(TokenType::FloatLiteral(lit));
+                        } else {
+                            panic!("Float literal {num_literal_str} malformed or too large");
+                        }
+                    }
+
+                    LiteralType::Double => {
+                        if let Some(lit) = num_literal_str.parse::<f64>().ok() {
+                            return Some(TokenType::DoubleLiteral(lit));
+                        } else {
+                            panic!("Float literal {num_literal_str} malformed or too large");
+                        }
+                    }
+                    _ => panic!("Not implemented")
                 }
 
             }

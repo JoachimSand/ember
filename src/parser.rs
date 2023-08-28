@@ -26,23 +26,25 @@ pub struct Enumerator<'n> {
     pub val : Option<i32>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum TypeSpecifier<'n> {
 
     // Primitives
+    // We follow LP64. That is, long and pointers are 64 bit while
+    // integers are 32 bit.
     UnsignedChar,     // u8.  Must be able to hold numbers between 0-255. 
     SignedChar,       // i8.  Must be able to hold nubmers between -127-128
     Short,            // i16. May be referred to as short, short int, signed short int, signed short
     UnsignedShort,    // u16. May be referred to as unsigned short, unsigned short int
     Int,              // i32. May be referred to as int, signed int or signed.
     UnsignedInt,      // u32. May be referred to as unsigned int, unsigned.
-    Long,             // i32. May be referred to as long int, long, signed long int, signed long.
-    UnsignedLong,     // u32. May be referred to as unsigned long, unsigned long int.
-    LongLong,         // i64. May be reffered to as long long, long long int, signed long long int, signed long long
-    UnsignedLongLong, // u64. May be reffered to as unsigned long long, unsigned long long int.
-    Float,
-    Double,
-    LongDouble,
+    Long,             // i64. May be referred to as long int, long, signed long int, signed long.
+    UnsignedLong,     // u64. May be referred to as unsigned long, unsigned long int.
+    LongLong,         // i128. May be reffered to as long long, long long int, signed long long int, signed long long
+    UnsignedLongLong, // u128. May be reffered to as unsigned long long, unsigned long long int.
+    Float,            // f32
+    Double,           // f64
+    LongDouble,       // f64
     Void,
     TypeAlias(&'n TypeAlias<'n>),
     
@@ -55,10 +57,11 @@ pub enum TypeSpecifier<'n> {
         name : Option<&'n str>, 
         declaration_list : Option<&'n [&'n StructDeclarationNode<'n>]>
     },
+    #[default]
     None,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Specifiers<'n> {
     // Type qualifiers
     pub is_const : bool,
@@ -71,6 +74,7 @@ pub struct Specifiers<'n> {
 
     pub type_specifier : TypeSpecifier<'n>,
 }
+
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructDeclarationNode<'n> {
@@ -260,7 +264,8 @@ pub fn parse_primary<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena) 
             return Ok(node);
         }
 
-        TokenType::IntegerLiteral(_) | TokenType::FloatLiteral(_) | TokenType::DoubleLiteral(_) | TokenType::StringLiteral(_) => {
+        TokenType::IntLiteral(_) | TokenType::LongLiteral(_) | TokenType::UIntLiteral(_) | TokenType::ULongLiteral(_) | 
+        TokenType::FloatLiteral(_) | TokenType::DoubleLiteral(_) | TokenType::StringLiteral(_) => {
             let node = arena.push(Node::Literal(cur_token))?;
             return Ok(node);
         }
@@ -461,8 +466,8 @@ fn parse_expr<'arena>(lexer : &mut Lexer<'arena>, arena : &'arena Arena, min_pre
 fn eval_const_expression<'e>(node : &Node) -> Result<i64, CompilationError<'e>> {
     match node {
         Node::Literal(token) => {
-            if let TokenType::IntegerLiteral(num) = token.token_type {
-                return Ok(num);
+            if let TokenType::IntLiteral(num) = token.token_type {
+                return Ok(num as i64);
             } else {
                 return Err(CompilationError::InvalidConstExpression);
             }

@@ -296,9 +296,12 @@ pub fn print_ast(start : &Node, prefix : String, is_last : bool) {
         Node::Literal(lit) => {
             print!("\x1b[1;35m");
             match lit.token_type {
-                TokenType::IntegerLiteral(val) => print!("{}", val), 
-                TokenType::DoubleLiteral(val) => print!("{}", val),
-                TokenType::FloatLiteral(val) => print!("{}", val),
+                TokenType::IntLiteral(val) => print!("{}i", val), 
+                TokenType::LongLiteral(val) => print!("{}l", val), 
+                TokenType::UIntLiteral(val) => print!("{}ui", val), 
+                TokenType::ULongLiteral(val) => print!("{}ul", val), 
+                TokenType::DoubleLiteral(val) => print!("{}d", val),
+                TokenType::FloatLiteral(val) => print!("{}f", val),
                 TokenType::StringLiteral(val) => print!("{}", val),
                 _ => ()
             }

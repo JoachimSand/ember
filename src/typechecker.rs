@@ -1,4 +1,3 @@
-/*
 use std::collections::HashMap;
 use std::fmt;
 
@@ -7,12 +6,19 @@ use crate::lexer::*;
 use crate::parser::*;
 
 // See https://blog.robertelder.org/building-a-c-compiler-type-system-a-canonical-type-representation/ 
+#[derive(Debug, PartialEq)]
 pub struct Type<'t>{
     // e.g. int, long, const volatile etc.
-    specifiers : &'t [Token<'t>],
+    pub specifiers : &'t Specifiers<'t>,
     
     // e.g. pointer deref, array index etc.
-    derived_types : &'t [DerivedType<'t>],
+    pub derived_types : &'t [DerivedType<'t>],
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TypeAlias<'t>{
+    pub name : &'t str,
+    pub alias : Type<'t>,
 }
 
 // Type used locally when typechecking expressions
@@ -23,7 +29,7 @@ pub struct ExprType<'t> {
 
 impl<'t> fmt::Display for Type<'t>{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
-        write!(f, "type: {:?}, {:?}", self.specifiers, self.derived_types)
+        write!(f, "{:?}, {:?}", self.specifiers, self.derived_types)
     }
 }
 
@@ -43,9 +49,11 @@ fn pop_scope(scopes : &mut Scopes){
 // Note: By variable we refer to functions as well
 fn push_variable<'s, 't : 's>(scopes : &mut Scopes<'s, 't>, var_name : &'t str, var_type : Type<'t>) -> Result<(), CompilationError<'t>>
 {
+    println!("Adding {var_name} to scope {}", scopes.len());
+
     let cur_scope = scopes.last_mut().ok_or(CompilationError::NoScopes)?;
 
-    println!("Adding {var_name} with type {var_type} to a scope");
+    //println!("Adding {var_name} with type {var_type} to a scope");
     if let Some(_) = cur_scope.insert(var_name, var_type) {
         return Err(CompilationError::Redefinition(var_name));
     } 
@@ -55,11 +63,17 @@ fn push_variable<'s, 't : 's>(scopes : &mut Scopes<'s, 't>, var_name : &'t str, 
 fn type_check_expr<'s, 'n : 's>(scopes : &Scopes<'s, 'n>, expr : &'n Node<'n>) -> Result<ExprType<'n>, CompilationError<'n>>{
     match *expr {
         Node::Literal(literal) => {
-            match literal {
-                Token::IntegerLiteral(_) => {
-                    let specifiers = vec![Token::Int];
+            match literal.token_type {
+
+                TokenType::IntLiteral(_) => {
+                    return Err(CompilationError::NotImplemented);
+                    /*
+                    let mut specifiers = Specifiers::default();
+
+                    
+                    specifiers.type_specifier = TypeSpecifier::Int;
                     let expr_type = ExprType{specifiers : vec![Token::Int], derived_types : Vec::<DerivedType>::new()};
-                    return Ok(expr_type);
+                    return Ok(expr_type);*/
                 }
 
                 _ => return Err(CompilationError::InvalidASTStructure),
@@ -92,18 +106,38 @@ fn type_check_compound_stmt<'s, 'n : 's>(scopes : &mut Scopes<'s, 'n>, compound_
     push_new_scope(scopes);
 
     if let Node::CompoundStatement { declaration_list, statement_list } = compound_statement {
-        if let Node::DeclarationList(list) = declaration_list {
-            for declaration in *list {
-                if let Node::Declaration { declaration_specifiers, init_declarator_list } = *declaration {
-                    if let Node::InitDeclarator{ declarator, initializer} = *init_declarator_list {
-                        let var_type = Type{ specifiers : declaration_specifiers.specifiers, derived_types : declarator.derived_types};
-                        push_variable(scopes, declarator.name, var_type)?;
-                        
-                        // TODO: Typecheck initializer
-                    } else {
-                        return Err(CompilationError::NotImplemented);
+        if let Node::DeclarationList(decl_list) = declaration_list {
+            
+            // Run through every declaration, push it to the scope
+            for declaration in *decl_list {
+                match declaration {    
+                    Node::Declaration { declaration_specifiers, init_declarator_list : Node::InitDeclaratorList(init_list) } => {
+                        for init_decl in *init_list {
+                            let var_type = Type{ specifiers : declaration_specifiers, derived_types : init_decl.declarator.derived_types};
+                            push_variable(scopes, init_decl.declarator.name.unwrap(), var_type)?;
+                        }
                     }
-                }
+                    _ => return Err(CompilationError::InvalidASTStructure)
+                }                
+            }
+        }
+
+        if let Node::StatementList(statmt_list) = statement_list {
+            for statmt in *statmt_list {
+                match statmt {
+                    Node::CompoundStatement { .. } => {
+                        type_check_compound_stmt(scopes, statmt)?;
+                    }
+
+                    Node::IfStatementList(if_list) => {
+                        for if_stmt in *if_list {
+                            //if_stmt.condition
+                            
+                        }
+                    }
+                                        
+                    _ => return Err(CompilationError::InvalidASTStructure)
+                }                
             }
         }
     }
@@ -123,22 +157,21 @@ pub fn type_check_start<'n>(translation_unit : &'n Node<'n>) -> Result<(), Compi
             match *external_declaration {
 
                 Node::FunctionDefinition{ declaration_specifiers, declarator, compound_statement} => {
-                    let func_type : Type = Type{specifiers : declaration_specifiers.specifiers, derived_types : declarator.derived_types};
-                    push_variable(scopes, declarator.name, func_type)?;
-                    
+                    let func_type : Type = Type{specifiers : declaration_specifiers, derived_types : declarator.derived_types};
+                    push_variable(scopes, declarator.name.unwrap(), func_type)?;                   
                     type_check_compound_stmt(scopes, compound_statement)?;
                 }
 
-                Node::Declaration { declaration_specifiers, init_declarator_list } => {
-                    
-                    // Just a a single declarator
-                    if let Node::InitDeclarator { declarator, initializer } = init_declarator_list {
-                        let declaration_type = Type{ specifiers : declaration_specifiers.specifiers, derived_types : declarator.derived_types};
-                        push_variable(scopes, declarator.name, declaration_type)?;
-                    } else {
-                        // TODO: Implement initializer lists
-                        return Err(CompilationError::NotImplemented);
+                Node::Declaration { declaration_specifiers, init_declarator_list : Node::InitDeclaratorList(list) } => {                    
+                    if declaration_specifiers.is_typedef {
+                        continue;
                     }
+                    
+                    for init_declarator in *list {
+                        let declarator = init_declarator.declarator;
+                        let declaration_type = Type{ specifiers : declaration_specifiers, derived_types : declarator.derived_types};
+                        push_variable(scopes, declarator.name.unwrap(), declaration_type)?;
+                    }                        
                 }
                 _ => return Err(CompilationError::InvalidASTStructure),
             } 
@@ -148,4 +181,4 @@ pub fn type_check_start<'n>(translation_unit : &'n Node<'n>) -> Result<(), Compi
     } else {
         return Err(CompilationError::InvalidASTStructure);
     }
-}*/
+}
