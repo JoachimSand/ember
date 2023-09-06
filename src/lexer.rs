@@ -25,15 +25,14 @@ pub enum TokenType<'t> {
 
     IntLiteral(i32),
     LongLiteral(i64),
-    //LongLongLiteral(i64),
 
     UIntLiteral(u32),
     ULongLiteral(u64),
-    //ULongLongLiteral(u64),
 
     FloatLiteral(f32),
     DoubleLiteral(f64),
     StringLiteral(&'t str),
+    CharLiteral(char),
 
     // Arithmetic Operators
     Plus,
@@ -195,10 +194,10 @@ impl <'input> Lexer <'input> {
 
         // get rid of white space and comments first
         loop {
-            let mut c = *self.peek_char()?;
+            let c = *self.peek_char()?;
 
             if c.is_whitespace() {
-                c = self.next_char()?;
+                self.next_char()?;
             } else if c == '/' {
                 self.next_char();
                 match self.peek_char()? {
@@ -209,10 +208,10 @@ impl <'input> Lexer <'input> {
                     '*' => {
                         // Handle multi-line comments!
                         loop {
-                            let c = self.char_stream.next()?;
+                            let c = self.next_char()?;
 
-                            if c == '*' && *self.char_stream.peek()? == '/' {
-                                self.char_stream.next();
+                            if c == '*' && *self.peek_char()? == '/' {
+                                self.next_char();
                                 break;
                             }
                         }
@@ -364,6 +363,17 @@ impl <'input> Lexer<'input> {
 
                 let literal = self.arena.push_str(string_literal.as_str()).unwrap();
                 return Some(TokenType::StringLiteral(literal));
+            }
+
+            '\'' => {
+                // Char literal
+                let char = self.next_char().unwrap();
+                if let Some('\'') = self.next_char() {
+                    return Some(TokenType::CharLiteral(char))
+                } else {
+                    // TODO: The lexer should really return errors
+                    panic!("Char literal is malformed.")
+                }
             }
 
             
