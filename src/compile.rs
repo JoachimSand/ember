@@ -3,8 +3,8 @@ use crate::lexer::*;
 use crate::parser::*;
 use crate::pretty_print::*;
 use crate::arena::*;
-use crate::typechecker::*;
-use crate::codegen::*;
+//use crate::typechecker::*;
+use crate::ir::*;
 
 // Global Error type for the whole compiler.
 #[derive(Debug)]
@@ -125,5 +125,6 @@ fn compile<'a>(arena : &'a Arena, lexer : &mut Lexer<'a>) -> Result<(), Compilat
     print_ast(translation_unit, "".to_string(), true);
     //type_check_start(translation_unit)?;
     //codegen_start(translation_unit)?;
+    ir_gen_translation_unit(translation_unit, arena)?;
     Ok(())
 }

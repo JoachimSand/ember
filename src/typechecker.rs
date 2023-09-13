@@ -22,9 +22,10 @@ pub struct TypeAlias<'t>{
 }
 
 // Type used locally when typechecking expressions
+#[derive(Default)]
 pub struct ExprType<'t> {
-    specifiers : Vec<Token<'t>>,
-    derived_types : Vec<DerivedType<'t>>,
+    pub specifiers : Specifiers<'t>,
+    pub derived_types : Vec<DerivedType<'t>>,
 }
 
 impl<'t> fmt::Display for Type<'t>{
@@ -36,18 +37,17 @@ impl<'t> fmt::Display for Type<'t>{
 type Scope<'s, 't> = HashMap<&'s str, Type<'t>>;
 pub type Scopes<'s, 't> = Vec<Scope<'s, 't>>;
 
-fn push_new_scope(scopes : &mut Scopes){
+pub fn push_new_scope(scopes : &mut Scopes){
     let scope = Scope::new();
-
     scopes.push(scope);
 }
 
-fn pop_scope(scopes : &mut Scopes){
+pub fn pop_scope(scopes : &mut Scopes){
     scopes.pop();
 }
 
 // Note: By variable we refer to functions as well
-fn push_variable<'s, 't : 's>(scopes : &mut Scopes<'s, 't>, var_name : &'t str, var_type : Type<'t>) -> Result<(), CompilationError<'t>>
+pub fn push_var_type<'r, 's : 'r, 't : 's>(scopes : &'r mut Scopes<'s, 't>, var_name : &'t str, var_type : Type<'t>) -> Result<(), CompilationError<'t>>
 {
     println!("Adding {var_name} to scope {}", scopes.len());
 
@@ -60,47 +60,7 @@ fn push_variable<'s, 't : 's>(scopes : &mut Scopes<'s, 't>, var_name : &'t str, 
     return Ok(());
 }
 
-fn type_check_expr<'s, 'n : 's>(scopes : &Scopes<'s, 'n>, expr : &'n Node<'n>) -> Result<ExprType<'n>, CompilationError<'n>>{
-    match *expr {
-        Node::Literal(literal) => {
-            match literal.token_type {
-
-                TokenType::IntLiteral(_) => {
-                    return Err(CompilationError::NotImplemented);
-                    /*
-                    let mut specifiers = Specifiers::default();
-
-                    
-                    specifiers.type_specifier = TypeSpecifier::Int;
-                    let expr_type = ExprType{specifiers : vec![Token::Int], derived_types : Vec::<DerivedType>::new()};
-                    return Ok(expr_type);*/
-                }
-
-                _ => return Err(CompilationError::InvalidASTStructure),
-            }
-        }
-
-        Node::Infix { operator, left, right } => {
-            let left_type = type_check_expr(scopes, left)?;
-            let right_type = type_check_expr(scopes, right)?;
-
-            if left_type.derived_types.is_empty() && right_type.derived_types.is_empty() {
-                // Both left and right are arithmetic, perform type promotion
-
-                // TODO: Add suport for more basic types e.g. short
-                Err(CompilationError::NotImplemented)
-
-            } else {
-                return Err(CompilationError::NotImplemented);
-            }
-            
-        }
-
-        _ => {
-            return Err(CompilationError::InvalidASTStructure);
-        }
-    }
-}
+/*
 
 fn type_check_compound_stmt<'s, 'n : 's>(scopes : &mut Scopes<'s, 'n>, compound_statement : &'n Node<'n>) -> Result<(), CompilationError<'n>>{
     push_new_scope(scopes);
@@ -182,3 +142,4 @@ pub fn type_check_start<'n>(translation_unit : &'n Node<'n>) -> Result<(), Compi
         return Err(CompilationError::InvalidASTStructure);
     }
 }
+*/

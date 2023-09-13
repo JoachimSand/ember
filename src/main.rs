@@ -10,7 +10,7 @@ mod pretty_print;
 mod typechecker;
 mod arena;
 mod compile;
-mod codegen;
+mod ir;
 
 use compile::*;
 
