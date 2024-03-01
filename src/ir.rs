@@ -94,8 +94,17 @@ impl<'v> Display for Operand<'v> {
     }
 }
 
+// TODO: Consider removing IRType for some of these operations
+// where the dst variable contains the relevant IRType. 
 #[derive(Clone, Debug, Copy, PartialEq)]
 pub enum Instruction<'i> {
+    Alloca {
+        dst: Variable<'i>,
+    },
+    Store {
+        src: Operand<'i>,
+        dst: Variable<'i>,
+    },
     Add {
         ir_type: IRType,
         dst: Variable<'i>,
@@ -118,7 +127,7 @@ pub enum Instruction<'i> {
         dst: Variable<'i>,
         src: Operand<'i>,
     },
-    FunctionCall {
+    _FunctionCall {
         dst: Variable<'i>,
         parameters: &'i [&'i Variable<'i>],
     },
@@ -138,6 +147,13 @@ pub struct IRState<'i> {
 fn print_basic_block(bb: &BasicBlock) {
     for instruction in &bb.instructions {
         match instruction {
+            Instruction::Alloca { dst } => println!("{dst} = alloca {:?}", dst.ir_type),
+            Instruction::Store { src, dst } => {
+                match src {
+                    Operand::Variable(val) => println!("store {:?} {}, ptr {dst}", val.ir_type, val),
+                    Operand::Constant(c) => println!("store {:?}, ptr {dst}", c),
+                }
+            }
             Instruction::Add {
                 ir_type,
                 dst,
@@ -177,11 +193,15 @@ fn specifier_to_ir_type(type_specifier: &TypeSpecifier) -> IRType {
     }
 }
 
-fn new_temp_var<'s, 'a: 's>(ir_state: &'s mut IRState<'a>, ir_type: IRType) -> Variable<'a> {
+fn next_uuid<'a>(ir_state: &mut IRState<'a>) -> u32 {
     ir_state.uuid_count += 1;
+    return ir_state.uuid_count;
+}
+
+fn new_temp_var<'s, 'a: 's>(ir_state: &'s mut IRState<'a>, ir_type: IRType) -> Variable<'a> {
     Variable {
         disp_name: None,
-        uuid: ir_state.uuid_count,
+        uuid: next_uuid(ir_state),
         version: None,
         ir_type,
     }
@@ -207,6 +227,8 @@ fn ir_gen_expression<'a, 's>(
     };
 
     match *expr {
+        // Node::
+        
         Node::Literal(literal) => {
             let (c_type, ir_type, constant) = match literal.token_type {
                 TokenType::IntLiteral(val) => (
@@ -247,13 +269,7 @@ fn ir_gen_expression<'a, 's>(
                 _ => return Err(CompilationError::InvalidASTStructure),
             };
 
-            let dst = Variable {
-                disp_name: None,
-                uuid: ir_state.uuid_count,
-                version: None,
-                ir_type,
-            };
-            ir_state.uuid_count += 1;
+            let dst = new_temp_var(ir_state, ir_type);
 
             let src = Operand::Constant(constant);
             let instruction = Instruction::Assign { dst, src };
@@ -278,83 +294,78 @@ fn ir_gen_expression<'a, 's>(
         // may be used in an expression wherever an int or unsigned int may be used.
         // If an int can represent all values of the original type, the value is converted to an int;
         // otherwise it is converted to an unsigned int. These are called the integral promotions
-        Node::Infix {
-            operator,
-            left,
-            right,
-        } => {
+        Node::Infix {operator, left, right} => {
             let (mut left_c_type, mut left_variable) =
                 ir_gen_expression(left, scopes, bb, ir_state, arena)?;
             let (mut right_c_type, mut right_variable) =
                 ir_gen_expression(right, scopes, bb, ir_state, arena)?;
 
-            let (c_type, ir_type) =
-                if left_c_type.derived_types.is_empty() && right_c_type.derived_types.is_empty() {
-                    // Both left and right are arithmetic, perform type promotion
+            let (c_type, ir_type) = if left_c_type.derived_types.is_empty() && right_c_type.derived_types.is_empty() {
+                // Both left and right are arithmetic, perform type promotion
 
-                    let l_type_spec = left_c_type.specifiers.type_specifier;
-                    let r_type_spec = right_c_type.specifiers.type_specifier;
+                let l_type_spec = left_c_type.specifiers.type_specifier;
+                let r_type_spec = right_c_type.specifiers.type_specifier;
 
-                    enum PromotionDirection {
-                        LeftToRight,
-                        RightToLeft,
-                    }
-                    use PromotionDirection::*;
+                enum PromotionDirection {
+                    LeftToRight,
+                    RightToLeft,
+                }
+                use PromotionDirection::*;
 
-                    // TODO: This currently only works for integers.
-                    // How do we handle
-                    let mut promote = |direction: PromotionDirection| {
-                        let (src_type_spec, dst_type_spec, src_var) = match direction {
-                            PromotionDirection::LeftToRight => {
-                                (l_type_spec, r_type_spec, left_variable)
-                            }
-                            PromotionDirection::RightToLeft => {
-                                (r_type_spec, l_type_spec, right_variable)
-                            }
-                        };
-                        let src_type = specifier_to_ir_type(&src_type_spec);
-                        let dst_type = specifier_to_ir_type(&dst_type_spec);
-                        println!("{src_type:?} {dst_type:?}");
-                        let dst = new_temp_var(ir_state, dst_type);
-                        let cast_instr = Instruction::SignExtend {
-                            dst,
-                            src: Operand::Variable(src_var),
-                            src_type,
-                            dst_type,
-                        };
-                        bb.instructions.push(cast_instr);
-                        match direction {
-                            PromotionDirection::LeftToRight => left_variable = dst,
-                            PromotionDirection::RightToLeft => right_variable = dst,
+                // TODO: This currently only works for integers.
+                // How do we handle
+                let mut promote = |direction: PromotionDirection| {
+                    let (src_type_spec, dst_type_spec, src_var) = match direction {
+                        PromotionDirection::LeftToRight => {
+                            (l_type_spec, r_type_spec, left_variable)
                         }
-                        (specifier_to_expr_type(dst_type_spec), dst_type)
+                        PromotionDirection::RightToLeft => {
+                            (r_type_spec, l_type_spec, right_variable)
+                        }
                     };
-
-                    match (l_type_spec, r_type_spec) {
-                        (TypeSpecifier::LongDouble, _) => promote(RightToLeft),
-                        (_, TypeSpecifier::LongDouble) => promote(LeftToRight),
-
-                        (TypeSpecifier::Double, _) => promote(RightToLeft),
-                        (_, TypeSpecifier::Double) => promote(LeftToRight),
-
-                        (TypeSpecifier::Float, _) => promote(RightToLeft),
-                        (_, TypeSpecifier::Float) => promote(LeftToRight),
-
-                        (TypeSpecifier::UnsignedLong, _) => promote(RightToLeft),
-                        (_, TypeSpecifier::UnsignedLong) => promote(LeftToRight),
-                        // We use 64 bit long and 32 bit int -> hence long can represent all values of an unsigned int.
-                        // Convert the unsigned int to long
-                        (TypeSpecifier::Long, TypeSpecifier::UnsignedInt) => promote(RightToLeft),
-                        (TypeSpecifier::UnsignedInt, TypeSpecifier::Long) => promote(LeftToRight),
-
-                        (TypeSpecifier::Int, TypeSpecifier::Int) => {
-                            (specifier_to_expr_type(TypeSpecifier::Int), IRType::I32)
-                        }
-                        _ => return Err(CompilationError::NotImplemented),
+                    let src_type = specifier_to_ir_type(&src_type_spec);
+                    let dst_type = specifier_to_ir_type(&dst_type_spec);
+                    println!("{src_type:?} {dst_type:?}");
+                    let dst = new_temp_var(ir_state, dst_type);
+                    let cast_instr = Instruction::SignExtend {
+                        dst,
+                        src: Operand::Variable(src_var),
+                        src_type,
+                        dst_type,
+                    };
+                    bb.instructions.push(cast_instr);
+                    match direction {
+                        PromotionDirection::LeftToRight => left_variable = dst,
+                        PromotionDirection::RightToLeft => right_variable = dst,
                     }
-                } else {
-                    return Err(CompilationError::NotImplemented);
+                    (specifier_to_expr_type(dst_type_spec), dst_type)
                 };
+
+                match (l_type_spec, r_type_spec) {
+                    (TypeSpecifier::LongDouble, _) => promote(RightToLeft),
+                    (_, TypeSpecifier::LongDouble) => promote(LeftToRight),
+
+                    (TypeSpecifier::Double, _) => promote(RightToLeft),
+                    (_, TypeSpecifier::Double) => promote(LeftToRight),
+
+                    (TypeSpecifier::Float, _) => promote(RightToLeft),
+                    (_, TypeSpecifier::Float) => promote(LeftToRight),
+
+                    (TypeSpecifier::UnsignedLong, _) => promote(RightToLeft),
+                    (_, TypeSpecifier::UnsignedLong) => promote(LeftToRight),
+                    // We use 64 bit long and 32 bit int -> hence long can represent all values of an unsigned int.
+                    // Convert the unsigned int to long
+                    (TypeSpecifier::Long, TypeSpecifier::UnsignedInt) => promote(RightToLeft),
+                    (TypeSpecifier::UnsignedInt, TypeSpecifier::Long) => promote(LeftToRight),
+
+                    (TypeSpecifier::Int, TypeSpecifier::Int) => {
+                        (specifier_to_expr_type(TypeSpecifier::Int), IRType::I32)
+                    }
+                    _ => return Err(CompilationError::NotImplemented),
+                }
+            } else {
+                return Err(CompilationError::NotImplemented);
+            };
 
             let dst = new_temp_var(ir_state, ir_type);
             let instruction = match operator.token_type {
@@ -372,7 +383,7 @@ fn ir_gen_expression<'a, 's>(
         }
 
         _ => {
-            return Err(CompilationError::InvalidASTStructure);
+            return Err(CompilationError::NotImplemented);
         }
     }
 }
@@ -387,11 +398,7 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
     let instructions = Vec::<Instruction>::new();
     let mut bb = BasicBlock { instructions };
 
-    if let Node::CompoundStatement {
-        declaration_list,
-        statement_list,
-    } = *compound_stmt
-    {
+    if let Node::CompoundStatement {declaration_list, statement_list} = *compound_stmt {
         if let Node::DeclarationList(list) = declaration_list {
             for declaration in *list {
                 match declaration {
@@ -400,23 +407,36 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                         init_declarator_list: Node::InitDeclaratorList(init_list),
                     } => {
                         for init_decl in *init_list {
-                            ir_gen_expression(
-                                init_decl.initializer,
-                                type_scopes,
-                                &mut bb,
-                                ir_state,
-                                arena,
-                            )?;
 
-                            let var_type = Type {
-                                specifiers: declaration_specifiers,
-                                derived_types: init_decl.declarator.derived_types,
+                            // Generate IR for the initializer expression, save it to a temp variable.               
+                            let (_, expr_dest_var) = ir_gen_expression(init_decl.initializer, type_scopes, &mut bb, ir_state, arena)?;
+                            
+                            let declarator_name = init_decl.declarator.name.unwrap();
+                            
+                            // Allocate a stack space for the variable. 
+                            // This avoids dealing with SSA restrictions
+                            let decl_dest = Variable {
+                                disp_name : Some(declarator_name),
+                                uuid : next_uuid(ir_state),
+                                version : None,
+                                ir_type : expr_dest_var.ir_type,
                             };
-                            push_var_type(
-                                type_scopes,
-                                init_decl.declarator.name.unwrap(),
-                                var_type,
-                            )?;
+                            let alloc_instr = Instruction::Alloca { dst: decl_dest };
+                            bb.instructions.push(alloc_instr);
+
+                            // Store the temp variable in the stack space for the actual variable.
+                            let store_instr = Instruction::Store { src: Operand::Variable(expr_dest_var), dst:  decl_dest};
+                            bb.instructions.push(store_instr);
+
+                            let var_type_info = TypeInfo {
+                                c_type : Type {
+                                    specifiers: declaration_specifiers,
+                                    derived_types: init_decl.declarator.derived_types,
+                                },
+                                ir_type : expr_dest_var.ir_type,
+                            };
+                            push_var_type(type_scopes, init_decl.declarator.name.unwrap(), var_type_info)?;
+
                         }
                     }
                     _ => return Err(CompilationError::InvalidASTStructure),
@@ -462,7 +482,7 @@ pub fn ir_gen_translation_unit<'s, 'ast: 's>(
                         specifiers: declaration_specifiers,
                         derived_types: declarator.derived_types,
                     };
-                    push_var_type(scopes, declarator.name.unwrap(), func_type)?;
+                    // push_var_type(scopes, declarator.name.unwrap(), TypeInfo { c_type :func_type, )?;
                     ir_gen_compound_smt(compound_statement, scopes, &mut ir_state, arena)?;
                 }
 
@@ -482,7 +502,7 @@ pub fn ir_gen_translation_unit<'s, 'ast: 's>(
             }
         }
 
-        println!("{:?}", ir_state);
+        // println!("{:?}", ir_state);
 
         Ok(())
     } else {

@@ -1,7 +1,5 @@
-void main(){
-	a];
-	int a [10][23];
-	a[1*2 + 3][2] = 0;
-
-	return a[1][22];
+int main(){
+	int a = 1, b = 4;
+	// int b = a;
+	// return 1+a;
 }

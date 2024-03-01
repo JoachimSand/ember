@@ -4,6 +4,7 @@ use std::fmt;
 use crate::compile::CompilationError;
 use crate::lexer::*;
 use crate::parser::*;
+use crate::ir::IRType;
 
 // See https://blog.robertelder.org/building-a-c-compiler-type-system-a-canonical-type-representation/ 
 #[derive(Debug, PartialEq)]
@@ -15,11 +16,6 @@ pub struct Type<'t>{
     pub derived_types : &'t [DerivedType<'t>],
 }
 
-#[derive(Debug, PartialEq)]
-pub struct TypeAlias<'t>{
-    pub name : &'t str,
-    pub alias : Type<'t>,
-}
 
 // Type used locally when typechecking expressions
 #[derive(Default)]
@@ -28,13 +24,26 @@ pub struct ExprType<'t> {
     pub derived_types : Vec<DerivedType<'t>>,
 }
 
+// Type used locally when typechecking expressions
+pub struct TypeInfo<'t> {
+    pub c_type : Type<'t>,
+    pub ir_type : IRType,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TypeAlias<'t>{
+    pub name : &'t str,
+    pub alias : Type<'t>,
+}
+
+
 impl<'t> fmt::Display for Type<'t>{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result{
         write!(f, "{:?}, {:?}", self.specifiers, self.derived_types)
     }
 }
 
-type Scope<'s, 't> = HashMap<&'s str, Type<'t>>;
+type Scope<'s, 't> = HashMap<&'s str, TypeInfo<'t>>;
 pub type Scopes<'s, 't> = Vec<Scope<'s, 't>>;
 
 pub fn push_new_scope(scopes : &mut Scopes){
@@ -47,7 +56,7 @@ pub fn pop_scope(scopes : &mut Scopes){
 }
 
 // Note: By variable we refer to functions as well
-pub fn push_var_type<'r, 's : 'r, 't : 's>(scopes : &'r mut Scopes<'s, 't>, var_name : &'t str, var_type : Type<'t>) -> Result<(), CompilationError<'t>>
+pub fn push_var_type<'r, 's : 'r, 't : 's>(scopes : &'r mut Scopes<'s, 't>, var_name : &'t str, var_type : TypeInfo<'t>) -> Result<(), CompilationError<'t>>
 {
     println!("Adding {var_name} to scope {}", scopes.len());
 
