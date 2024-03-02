@@ -1,8 +1,8 @@
-use std::{fmt, error::Error};
+use crate::arena::*;
 use crate::lexer::*;
 use crate::parser::*;
 use crate::pretty_print::*;
-use crate::arena::*;
+use std::{error::Error, fmt};
 //use crate::typechecker::*;
 use crate::ir::*;
 
@@ -17,27 +17,27 @@ pub enum CompilationError<'e> {
     NotImplemented,
     UnexpectedToken(Token<'e>),
     ExpectedToken(TokenType<'e>),
-    ExpectedInput/*(&'e str)*/,
+    ExpectedInput, /*(&'e str)*/
     UnclosedDelimeter(Token<'e>),
     UnknownOperator(Token<'e>),
     UnableToDecomposeDeclaration,
     InvalidConstExpression,
-    CannotCombineDeclarationSpecifiers{
-        prev_specifier : Token<'e>,
-        specifier : Token<'e>, 
+    CannotCombineDeclarationSpecifiers {
+        prev_specifier: Token<'e>,
+        specifier: Token<'e>,
     },
     IllegalInitializer {
-        identifier_name : &'e str,
+        identifier_name: &'e str,
     },
 
     // Type Check Errors
     Redefinition(&'e str),
+    NoDefinitionFound,
     InvalidASTStructure,
     NoScopes,
 }
 
-
-fn display_token_error(token : Token, lexer : &mut Lexer, msg : String){
+fn display_token_error(token: Token, lexer: &mut Lexer, msg: String) {
     println!("{}: {msg}", red!("error"));
     println!("On line {}:", token.pos.line_num);
     while token.pos.line_num >= lexer.lines.len() {
@@ -65,30 +65,37 @@ fn display_token_error(token : Token, lexer : &mut Lexer, msg : String){
     println!("{0: <1$}{0:^<2$}", "", start_col, end_col - start_col);
 }
 
-fn display_compilation_error<'i>(err : CompilationError<'i>, lexer : &mut Lexer) {
+fn display_compilation_error<'i>(err: CompilationError<'i>, lexer: &mut Lexer) {
     use CompilationError::*;
     let err_str = match err {
-        InsufficientSpace       => "Memory Arena ran out of space.".to_string(),
-        NotImplemented          => "Error caused by feature not yet implemented.".to_string(),
-        UnimplVerbose(msg)      => format!("Error caused by unimplemented feature {msg}"),
+        InsufficientSpace => "Memory Arena ran out of space.".to_string(),
+        NotImplemented => "Error caused by feature not yet implemented.".to_string(),
+        UnimplVerbose(msg) => format!("Error caused by unimplemented feature {msg}"),
 
         // TODO: This error is generally unhelpful without explaining _what_ the parser expected to come next.
         ExpectedInput => format!("Lexer terminated early."),
-        UnknownOperator(t)    => {
-            display_token_error(t, lexer , format!("Expected an operator, got {:#?}", t.token_type));
+        UnknownOperator(t) => {
+            display_token_error(
+                t,
+                lexer,
+                format!("Expected an operator, got {:#?}", t.token_type),
+            );
             return;
         }
-        UnexpectedToken(t)    => {
+        UnexpectedToken(t) => {
             display_token_error(t, lexer, format!("Unexpected token {:#?}.", t.token_type));
             return;
         }
 
         UnclosedDelimeter(t) => {
-            display_token_error(t, lexer, format!("This delimiter is unclosed {:#?}.", t.token_type));
+            display_token_error(
+                t,
+                lexer,
+                format!("This delimiter is unclosed {:#?}.", t.token_type),
+            );
             return;
         }
-        _ => format!("Compilation Error: {err:?}"), 
-
+        _ => format!("Compilation Error: {err:?}"),
     };
 
     println!("Compilation Error: {err_str}")
@@ -96,7 +103,7 @@ fn display_compilation_error<'i>(err : CompilationError<'i>, lexer : &mut Lexer)
 
 // Don't compile - only parse the input
 // and produce a legible AST.
-pub fn parse_only(input : &str){
+pub fn parse_only(input: &str) {
     println!("{input}");
     let arena = &mut Arena::new(20000);
 
@@ -110,7 +117,7 @@ pub fn parse_only(input : &str){
     }
 }
 
-pub fn compile_start(input : &str){
+pub fn compile_start(input: &str) {
     let arena = &mut Arena::new(20000);
     let lexer = &mut Lexer::new(&input, &arena);
 
@@ -120,7 +127,7 @@ pub fn compile_start(input : &str){
     }
 }
 
-fn compile<'a>(arena : &'a Arena, lexer : &mut Lexer<'a>) -> Result<(), CompilationError<'a>>{
+fn compile<'a>(arena: &'a Arena, lexer: &mut Lexer<'a>) -> Result<(), CompilationError<'a>> {
     let translation_unit = parse_translational_unit(lexer, arena)?;
     print_ast(translation_unit, "".to_string(), true);
     //type_check_start(translation_unit)?;

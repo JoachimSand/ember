@@ -52,7 +52,7 @@ pub enum IRType {
 }
 
 #[derive(Clone, Debug, Copy, PartialEq)]
-pub struct Variable<'v> {
+pub struct Register<'v> {
     disp_name: Option<&'v str>,
 
     uuid: u32,
@@ -60,9 +60,12 @@ pub struct Variable<'v> {
     ir_type: IRType,
 }
 
-impl<'v> Display for Variable<'v> {
+impl<'v> Display for Register<'v> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}.{}", self.disp_name, self.uuid)
+        match self.disp_name {
+            Some(name) => write!(f, "%{}.{}", name, self.uuid),
+            None => write!(f, "%None.{}", self.uuid),
+        }
     }
 }
 
@@ -81,55 +84,61 @@ pub enum Constant {
 
 #[derive(Clone, Debug, Copy, PartialEq)]
 pub enum Operand<'o> {
-    Variable(Variable<'o>),
+    Register(Register<'o>),
     Constant(Constant),
 }
 
 impl<'v> Display for Operand<'v> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Variable(var) => write!(f, "{}", var),
+            Self::Register(reg) => write!(f, "{}", reg),
             _ => write!(f, "{:?}", self),
         }
     }
 }
 
 // TODO: Consider removing IRType for some of these operations
-// where the dst variable contains the relevant IRType. 
+// where the dst variable contains the relevant IRType.
 #[derive(Clone, Debug, Copy, PartialEq)]
 pub enum Instruction<'i> {
     Alloca {
-        dst: Variable<'i>,
+        dst: Register<'i>,
+    },
+    Load {
+        dst_type: IRType,
+        dst: Register<'i>,
+        src_type: IRType,
+        src: Register<'i>,
     },
     Store {
         src: Operand<'i>,
-        dst: Variable<'i>,
+        dst: Register<'i>,
     },
     Add {
         ir_type: IRType,
-        dst: Variable<'i>,
+        dst: Register<'i>,
         left: Operand<'i>,
         right: Operand<'i>,
     },
     SignExtend {
-        dst: Variable<'i>,
+        dst: Register<'i>,
         src: Operand<'i>,
         src_type: IRType,
         dst_type: IRType,
     },
     SiToFp {
-        dst: Variable<'i>,
+        dst: Register<'i>,
         src: Operand<'i>,
         src_type: IRType,
         dst_type: IRType,
     },
     Assign {
-        dst: Variable<'i>,
+        dst: Register<'i>,
         src: Operand<'i>,
     },
     _FunctionCall {
-        dst: Variable<'i>,
-        parameters: &'i [&'i Variable<'i>],
+        dst: Register<'i>,
+        parameters: &'i [&'i Register<'i>],
     },
 }
 
@@ -148,12 +157,16 @@ fn print_basic_block(bb: &BasicBlock) {
     for instruction in &bb.instructions {
         match instruction {
             Instruction::Alloca { dst } => println!("{dst} = alloca {:?}", dst.ir_type),
-            Instruction::Store { src, dst } => {
-                match src {
-                    Operand::Variable(val) => println!("store {:?} {}, ptr {dst}", val.ir_type, val),
-                    Operand::Constant(c) => println!("store {:?}, ptr {dst}", c),
-                }
-            }
+            Instruction::Store { src, dst } => match src {
+                Operand::Register(reg) => println!("store {:?} {}, ptr {dst}", reg.ir_type, reg),
+                Operand::Constant(c) => println!("store {:?}, ptr {dst}", c),
+            },
+            Instruction::Load {
+                dst_type,
+                dst,
+                src_type,
+                src,
+            } => println!("{dst} = load {dst_type:?}, {src_type:?} {src}"),
             Instruction::Add {
                 ir_type,
                 dst,
@@ -198,8 +211,8 @@ fn next_uuid<'a>(ir_state: &mut IRState<'a>) -> u32 {
     return ir_state.uuid_count;
 }
 
-fn new_temp_var<'s, 'a: 's>(ir_state: &'s mut IRState<'a>, ir_type: IRType) -> Variable<'a> {
-    Variable {
+fn new_temp_reg<'s, 'a: 's>(ir_state: &'s mut IRState<'a>, ir_type: IRType) -> Register<'a> {
+    Register {
         disp_name: None,
         uuid: next_uuid(ir_state),
         version: None,
@@ -208,68 +221,92 @@ fn new_temp_var<'s, 'a: 's>(ir_state: &'s mut IRState<'a>, ir_type: IRType) -> V
 }
 
 // Generate an expression in 3AC form. The destination of the most recent instruction contains the result.
-fn ir_gen_expression<'a, 's>(
+fn ir_gen_expression<'s, 'a>(
     expr: &'a Node<'a>,
-    scopes: &Scopes<'s, 's>,
+    scopes: &Scopes<'s, 'a>,
     bb: &'s mut BasicBlock<'a>,
     ir_state: &'s mut IRState<'a>,
     arena: &'a Arena,
-) -> Result<(ExprType<'a>, Variable<'a>), CompilationError<'a>> {
-    let specifier_to_expr_type = |type_specifier| {
+) -> Result<(Type<'a>, Register<'a>), CompilationError<'a>> {
+    // Used for allocating simpy types
+    let specifier_to_type = |type_specifier| -> Result<Type, CompilationError> {
         let specifiers = Specifiers {
             type_specifier,
             ..Default::default()
         };
-        return ExprType {
-            specifiers,
-            ..Default::default()
+        let t = Type {
+            specifiers: arena.push(specifiers)?,
+            derived_types: &[],
         };
+        return Ok(t);
     };
 
     match *expr {
-        // Node::
-        
+        Node::Identifier { name } => {
+            let var_info = match get_var_info(scopes, name) {
+                Some(t) => t,
+                None => return Err(CompilationError::NoDefinitionFound),
+            };
+
+            let copy_reg_dst = Register {
+                disp_name: Some(name),
+                uuid: next_uuid(ir_state),
+                version: None,
+                ir_type: var_info.ir_type,
+            };
+
+            let load_var_inst = Instruction::Load {
+                dst_type: var_info.ir_type,
+                dst: copy_reg_dst,
+                src_type: IRType::Ptr,
+                src: var_info.reg,
+            };
+            bb.instructions.push(load_var_inst);
+
+            return Ok((var_info.c_type, copy_reg_dst));
+        }
+
         Node::Literal(literal) => {
             let (c_type, ir_type, constant) = match literal.token_type {
                 TokenType::IntLiteral(val) => (
-                    specifier_to_expr_type(TypeSpecifier::Int),
+                    specifier_to_type(TypeSpecifier::Int)?,
                     IRType::I32,
                     Constant::I32(val),
                 ),
                 TokenType::LongLiteral(val) => (
-                    specifier_to_expr_type(TypeSpecifier::Short),
+                    specifier_to_type(TypeSpecifier::Short)?,
                     IRType::I64,
                     Constant::I64(val),
                 ),
                 TokenType::UIntLiteral(val) => (
-                    specifier_to_expr_type(TypeSpecifier::UnsignedInt),
+                    specifier_to_type(TypeSpecifier::UnsignedInt)?,
                     IRType::I32,
                     Constant::I32(i32::from_be_bytes(val.to_be_bytes())),
                 ),
                 TokenType::ULongLiteral(val) => (
-                    specifier_to_expr_type(TypeSpecifier::UnsignedLong),
+                    specifier_to_type(TypeSpecifier::UnsignedLong)?,
                     IRType::I64,
                     Constant::I64(i64::from_be_bytes(val.to_be_bytes())),
                 ),
                 TokenType::CharLiteral(val) => (
-                    specifier_to_expr_type(TypeSpecifier::SignedChar),
+                    specifier_to_type(TypeSpecifier::SignedChar)?,
                     IRType::I8,
                     Constant::I8(val as i8),
                 ),
                 TokenType::FloatLiteral(val) => (
-                    specifier_to_expr_type(TypeSpecifier::Float),
+                    specifier_to_type(TypeSpecifier::Float)?,
                     IRType::F32,
                     Constant::F32(val),
                 ),
                 TokenType::DoubleLiteral(val) => (
-                    specifier_to_expr_type(TypeSpecifier::Double),
+                    specifier_to_type(TypeSpecifier::Double)?,
                     IRType::F64,
                     Constant::F64(val),
                 ),
                 _ => return Err(CompilationError::InvalidASTStructure),
             };
 
-            let dst = new_temp_var(ir_state, ir_type);
+            let dst = new_temp_reg(ir_state, ir_type);
 
             let src = Operand::Constant(constant);
             let instruction = Instruction::Assign { dst, src };
@@ -294,86 +331,90 @@ fn ir_gen_expression<'a, 's>(
         // may be used in an expression wherever an int or unsigned int may be used.
         // If an int can represent all values of the original type, the value is converted to an int;
         // otherwise it is converted to an unsigned int. These are called the integral promotions
-        Node::Infix {operator, left, right} => {
-            let (mut left_c_type, mut left_variable) =
+        Node::Infix {
+            operator,
+            left,
+            right,
+        } => {
+            let (mut left_c_type, mut left_reg) =
                 ir_gen_expression(left, scopes, bb, ir_state, arena)?;
-            let (mut right_c_type, mut right_variable) =
+            let (mut right_c_type, mut right_reg) =
                 ir_gen_expression(right, scopes, bb, ir_state, arena)?;
 
-            let (c_type, ir_type) = if left_c_type.derived_types.is_empty() && right_c_type.derived_types.is_empty() {
-                // Both left and right are arithmetic, perform type promotion
+            let (c_type, ir_type) =
+                if left_c_type.derived_types.is_empty() && right_c_type.derived_types.is_empty() {
+                    // Both left and right are arithmetic, perform type promotion
 
-                let l_type_spec = left_c_type.specifiers.type_specifier;
-                let r_type_spec = right_c_type.specifiers.type_specifier;
+                    let l_type_spec = left_c_type.specifiers.type_specifier;
+                    let r_type_spec = right_c_type.specifiers.type_specifier;
 
-                enum PromotionDirection {
-                    LeftToRight,
-                    RightToLeft,
-                }
-                use PromotionDirection::*;
-
-                // TODO: This currently only works for integers.
-                // How do we handle
-                let mut promote = |direction: PromotionDirection| {
-                    let (src_type_spec, dst_type_spec, src_var) = match direction {
-                        PromotionDirection::LeftToRight => {
-                            (l_type_spec, r_type_spec, left_variable)
-                        }
-                        PromotionDirection::RightToLeft => {
-                            (r_type_spec, l_type_spec, right_variable)
-                        }
-                    };
-                    let src_type = specifier_to_ir_type(&src_type_spec);
-                    let dst_type = specifier_to_ir_type(&dst_type_spec);
-                    println!("{src_type:?} {dst_type:?}");
-                    let dst = new_temp_var(ir_state, dst_type);
-                    let cast_instr = Instruction::SignExtend {
-                        dst,
-                        src: Operand::Variable(src_var),
-                        src_type,
-                        dst_type,
-                    };
-                    bb.instructions.push(cast_instr);
-                    match direction {
-                        PromotionDirection::LeftToRight => left_variable = dst,
-                        PromotionDirection::RightToLeft => right_variable = dst,
+                    enum PromotionDirection {
+                        LeftToRight,
+                        RightToLeft,
                     }
-                    (specifier_to_expr_type(dst_type_spec), dst_type)
+                    use PromotionDirection::*;
+
+                    // TODO: This currently only works for integers.
+                    // How do we handle
+                    let mut promote =
+                    |direction: PromotionDirection| -> Result<(Type, IRType), CompilationError> {
+                        let (src_type_spec, dst_type_spec, src_reg) = match direction {
+                            PromotionDirection::LeftToRight => (l_type_spec, r_type_spec, left_reg),
+                            PromotionDirection::RightToLeft => {
+                                (r_type_spec, l_type_spec, right_reg)
+                            }
+                        };
+                        let src_type = specifier_to_ir_type(&src_type_spec);
+                        let dst_type = specifier_to_ir_type(&dst_type_spec);
+                        println!("{src_type:?} {dst_type:?}");
+                        let dst = new_temp_reg(ir_state, dst_type);
+                        let cast_instr = Instruction::SignExtend {
+                            dst,
+                            src: Operand::Register(src_reg),
+                            src_type,
+                            dst_type,
+                        };
+                        bb.instructions.push(cast_instr);
+                        match direction {
+                            PromotionDirection::LeftToRight => left_reg = dst,
+                            PromotionDirection::RightToLeft => right_reg = dst,
+                        }
+                        Ok((specifier_to_type(dst_type_spec)?, dst_type))
+                    };
+
+                    match (l_type_spec, r_type_spec) {
+                        (TypeSpecifier::LongDouble, _) => promote(RightToLeft)?,
+                        (_, TypeSpecifier::LongDouble) => promote(LeftToRight)?,
+
+                        (TypeSpecifier::Double, _) => promote(RightToLeft)?,
+                        (_, TypeSpecifier::Double) => promote(LeftToRight)?,
+
+                        (TypeSpecifier::Float, _) => promote(RightToLeft)?,
+                        (_, TypeSpecifier::Float) => promote(LeftToRight)?,
+
+                        (TypeSpecifier::UnsignedLong, _) => promote(RightToLeft)?,
+                        (_, TypeSpecifier::UnsignedLong) => promote(LeftToRight)?,
+                        // We use 64 bit long and 32 bit int -> hence long can represent all values of an unsigned int.
+                        // Convert the unsigned int to long
+                        (TypeSpecifier::Long, TypeSpecifier::UnsignedInt) => promote(RightToLeft)?,
+                        (TypeSpecifier::UnsignedInt, TypeSpecifier::Long) => promote(LeftToRight)?,
+
+                        (TypeSpecifier::Int, TypeSpecifier::Int) => {
+                            (specifier_to_type(TypeSpecifier::Int)?, IRType::I32)
+                        }
+                        _ => return Err(CompilationError::NotImplemented),
+                    }
+                } else {
+                    return Err(CompilationError::NotImplemented);
                 };
 
-                match (l_type_spec, r_type_spec) {
-                    (TypeSpecifier::LongDouble, _) => promote(RightToLeft),
-                    (_, TypeSpecifier::LongDouble) => promote(LeftToRight),
-
-                    (TypeSpecifier::Double, _) => promote(RightToLeft),
-                    (_, TypeSpecifier::Double) => promote(LeftToRight),
-
-                    (TypeSpecifier::Float, _) => promote(RightToLeft),
-                    (_, TypeSpecifier::Float) => promote(LeftToRight),
-
-                    (TypeSpecifier::UnsignedLong, _) => promote(RightToLeft),
-                    (_, TypeSpecifier::UnsignedLong) => promote(LeftToRight),
-                    // We use 64 bit long and 32 bit int -> hence long can represent all values of an unsigned int.
-                    // Convert the unsigned int to long
-                    (TypeSpecifier::Long, TypeSpecifier::UnsignedInt) => promote(RightToLeft),
-                    (TypeSpecifier::UnsignedInt, TypeSpecifier::Long) => promote(LeftToRight),
-
-                    (TypeSpecifier::Int, TypeSpecifier::Int) => {
-                        (specifier_to_expr_type(TypeSpecifier::Int), IRType::I32)
-                    }
-                    _ => return Err(CompilationError::NotImplemented),
-                }
-            } else {
-                return Err(CompilationError::NotImplemented);
-            };
-
-            let dst = new_temp_var(ir_state, ir_type);
+            let dst = new_temp_reg(ir_state, ir_type);
             let instruction = match operator.token_type {
                 TokenType::Plus => Instruction::Add {
                     ir_type,
                     dst,
-                    left: Operand::Variable(left_variable),
-                    right: Operand::Variable(right_variable),
+                    left: Operand::Register(left_reg),
+                    right: Operand::Register(right_reg),
                 },
                 _ => panic!("Not implemented."),
             };
@@ -398,7 +439,11 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
     let instructions = Vec::<Instruction>::new();
     let mut bb = BasicBlock { instructions };
 
-    if let Node::CompoundStatement {declaration_list, statement_list} = *compound_stmt {
+    if let Node::CompoundStatement {
+        declaration_list,
+        statement_list,
+    } = *compound_stmt
+    {
         if let Node::DeclarationList(list) = declaration_list {
             for declaration in *list {
                 match declaration {
@@ -407,36 +452,48 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                         init_declarator_list: Node::InitDeclaratorList(init_list),
                     } => {
                         for init_decl in *init_list {
+                            // Generate IR for the initializer expression, save it to a temp register.
+                            let (_, expr_dest_reg) = ir_gen_expression(
+                                init_decl.initializer,
+                                type_scopes,
+                                &mut bb,
+                                ir_state,
+                                arena,
+                            )?;
 
-                            // Generate IR for the initializer expression, save it to a temp variable.               
-                            let (_, expr_dest_var) = ir_gen_expression(init_decl.initializer, type_scopes, &mut bb, ir_state, arena)?;
-                            
                             let declarator_name = init_decl.declarator.name.unwrap();
-                            
-                            // Allocate a stack space for the variable. 
+
+                            // Allocate a stack space for the register.
                             // This avoids dealing with SSA restrictions
-                            let decl_dest = Variable {
-                                disp_name : Some(declarator_name),
-                                uuid : next_uuid(ir_state),
-                                version : None,
-                                ir_type : expr_dest_var.ir_type,
+                            let decl_dest = Register {
+                                disp_name: Some(declarator_name),
+                                uuid: next_uuid(ir_state),
+                                version: None,
+                                ir_type: expr_dest_reg.ir_type,
                             };
                             let alloc_instr = Instruction::Alloca { dst: decl_dest };
                             bb.instructions.push(alloc_instr);
 
-                            // Store the temp variable in the stack space for the actual variable.
-                            let store_instr = Instruction::Store { src: Operand::Variable(expr_dest_var), dst:  decl_dest};
+                            // Store the temp register in the stack space for the actual register.
+                            let store_instr = Instruction::Store {
+                                src: Operand::Register(expr_dest_reg),
+                                dst: decl_dest,
+                            };
                             bb.instructions.push(store_instr);
 
-                            let var_type_info = TypeInfo {
-                                c_type : Type {
+                            let reg_type_info = VariableInfo {
+                                c_type: Type {
                                     specifiers: declaration_specifiers,
                                     derived_types: init_decl.declarator.derived_types,
                                 },
-                                ir_type : expr_dest_var.ir_type,
+                                ir_type: expr_dest_reg.ir_type,
+                                reg: decl_dest,
                             };
-                            push_var_type(type_scopes, init_decl.declarator.name.unwrap(), var_type_info)?;
-
+                            push_reg_type(
+                                type_scopes,
+                                init_decl.declarator.name.unwrap(),
+                                reg_type_info,
+                            )?;
                         }
                     }
                     _ => return Err(CompilationError::InvalidASTStructure),
