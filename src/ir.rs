@@ -102,6 +102,7 @@ impl<'v> Display for Operand<'v> {
 #[derive(Clone, Debug, Copy, PartialEq)]
 pub enum Instruction<'i> {
     Alloca {
+        dst_type: IRType,
         dst: Register<'i>,
     },
     Load {
@@ -111,7 +112,9 @@ pub enum Instruction<'i> {
         src: Register<'i>,
     },
     Store {
+        src_type: IRType,
         src: Operand<'i>,
+        dst_type: IRType,
         dst: Register<'i>,
     },
     Add {
@@ -156,10 +159,17 @@ pub struct IRState<'i> {
 fn print_basic_block(bb: &BasicBlock) {
     for instruction in &bb.instructions {
         match instruction {
-            Instruction::Alloca { dst } => println!("{dst} = alloca {:?}", dst.ir_type),
-            Instruction::Store { src, dst } => match src {
-                Operand::Register(reg) => println!("store {:?} {}, ptr {dst}", reg.ir_type, reg),
-                Operand::Constant(c) => println!("store {:?}, ptr {dst}", c),
+            Instruction::Alloca { dst_type, dst } => println!("{dst} = alloca {dst_type:?}"),
+            Instruction::Store {
+                src_type,
+                src,
+                dst_type,
+                dst,
+            } => match src {
+                Operand::Register(reg) => {
+                    println!("store {src_type:?} {reg}, {dst_type:?} {dst}")
+                }
+                Operand::Constant(c) => println!("store {src_type:?} {c:?}, ptr {dst}"),
             },
             Instruction::Load {
                 dst_type,
@@ -471,12 +481,17 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                                 version: None,
                                 ir_type: expr_dest_reg.ir_type,
                             };
-                            let alloc_instr = Instruction::Alloca { dst: decl_dest };
+                            let alloc_instr = Instruction::Alloca {
+                                dst_type: decl_dest.ir_type,
+                                dst: decl_dest,
+                            };
                             bb.instructions.push(alloc_instr);
 
                             // Store the temp register in the stack space for the actual register.
                             let store_instr = Instruction::Store {
+                                src_type: expr_dest_reg.ir_type,
                                 src: Operand::Register(expr_dest_reg),
+                                dst_type: decl_dest.ir_type,
                                 dst: decl_dest,
                             };
                             bb.instructions.push(store_instr);
