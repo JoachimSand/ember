@@ -26,7 +26,7 @@ pub struct ExprType<'t> {
 #[derive(Clone, Copy)]
 pub struct VariableInfo<'t> {
     pub c_type: Type<'t>,
-    pub ir_type: IRType,
+    // pub ir_type: IRType,
     pub reg: Register<'t>,
 }
 

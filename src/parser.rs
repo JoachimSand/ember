@@ -134,6 +134,7 @@ pub enum Node<'n> {
         declaration_list: &'n Node<'n>,
         statement_list: &'n Node<'n>,
     },
+    // TODO: These two do not need to be Node variants.
     DeclarationList(&'n [&'n Node<'n>]),
     StatementList(&'n [&'n Node<'n>]),
 
@@ -2054,8 +2055,11 @@ fn parse_compound_statement<'arena>(
             }*/
         }
 
+        // statement_list
+        // 	: statement
+        // 	| statement_list statement
+        // 	;
         let mut statements = Vec::<&Node>::new();
-
         loop {
             match peek_token(lexer)?.token_type {
                 TokenType::RCurlyBracket => {
