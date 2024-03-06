@@ -1,4 +1,5 @@
 use crate::arena::*;
+use crate::colours::*;
 use crate::compile::CompilationError;
 use crate::lexer::*;
 use crate::parser::*;
@@ -63,8 +64,8 @@ pub struct Register<'v> {
 impl<'v> Display for Register<'v> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.disp_name {
-            Some(name) => write!(f, "%{}.{}", name, self.uuid),
-            None => write!(f, "%None.{}", self.uuid),
+            Some(name) => write!(f, "{B_BLUE_START}%{}.{}{FORMAT_END}", name, self.uuid),
+            None => write!(f, "{B_BLUE_START}%None.{}{FORMAT_END}", self.uuid),
         }
     }
 }
@@ -159,14 +160,16 @@ pub enum Instruction<'i> {
 
 impl<'i> Display for Instruction<'i> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{RED_START}")?;
         match self {
-            Instruction::Alloca { .. } => write!(f, "alloca"),
-            Instruction::Load { .. } => write!(f, "load"),
-            Instruction::Store { .. } => write!(f, "store"),
-            Instruction::Add { .. } => write!(f, "Add"),
-            Instruction::Mul { .. } => write!(f, "Mul"),
-            _ => write!(f, "Display unimpl. for {self:?}"),
+            Instruction::Alloca { .. } => write!(f, "alloca")?,
+            Instruction::Load { .. } => write!(f, "load")?,
+            Instruction::Store { .. } => write!(f, "store")?,
+            Instruction::Add { .. } => write!(f, "add")?,
+            Instruction::Mul { .. } => write!(f, "mul")?,
+            _ => return write!(f, "{FORMAT_END}Display unimpl. for {self:?}"),
         }
+        write!(f, "{FORMAT_END}")
     }
 }
 
@@ -184,7 +187,9 @@ pub struct IRState<'i> {
 fn print_basic_block(bb: &BasicBlock) {
     for instruction in &bb.instructions {
         match instruction {
-            Instruction::Alloca { dst_type, dst } => println!("{dst} = alloca {dst_type:?}"),
+            Instruction::Alloca { dst_type, dst } => {
+                println!("{dst} = {RED_START}alloca{FORMAT_END} {dst_type:?}")
+            }
             Instruction::Store {
                 src_type,
                 src,
@@ -192,16 +197,18 @@ fn print_basic_block(bb: &BasicBlock) {
                 dst,
             } => match src {
                 Operand::Register(reg) => {
-                    println!("store {src_type:?} {reg}, {dst_type:?} {dst}")
+                    println!("{RED_START}store{FORMAT_END} {src_type:?} {reg}, {dst_type:?} {dst}")
                 }
-                Operand::Constant(c) => println!("store {src_type:?} {c:?}, ptr {dst}"),
+                Operand::Constant(c) => {
+                    println!("{RED_START}store{FORMAT_END} {src_type:?} {c:?}, ptr {dst}")
+                }
             },
             Instruction::Load {
                 dst_type,
                 dst,
                 src_type,
                 src,
-            } => println!("{dst} = load {dst_type:?}, {src_type:?} {src}"),
+            } => println!("{dst} = {instruction} {dst_type:?}, {src_type:?} {src}"),
             Instruction::Add {
                 ir_type,
                 dst,
@@ -220,13 +227,17 @@ fn print_basic_block(bb: &BasicBlock) {
                 src,
                 src_type,
                 dst_type,
-            } => println!("{dst} = S. Ext {src} {src_type:?} to {dst_type:?}"),
+            } => {
+                println!("{dst} = {RED_START}sext{FORMAT_END} {src} {src_type:?} to {dst_type:?}")
+            }
             Instruction::Truncate {
                 dst,
                 src,
                 src_type,
                 dst_type,
-            } => println!("{dst} = Trunc. {src_type:?} {src} to {dst_type:?}"),
+            } => {
+                println!("{dst} = {RED_START}trunc{FORMAT_END} {src_type:?} {src} to {dst_type:?}")
+            }
             _ => println!("Print not implemented for {:?}", instruction),
         }
     }
@@ -287,7 +298,7 @@ fn cast_operation<'s, 'a>(
     // };
     let to_type = specifier_to_ir_type(&to_info.c_type.specifiers.type_specifier);
     let from_type = specifier_to_ir_type(&from_info.c_type.specifiers.type_specifier);
-    println!("{from_type:?} {to_type:?}");
+    println!("Casting from {from_type:?} to {to_type:?}");
     let dst = new_temp_reg(ir_state, from_type);
 
     let cast_instr = match cast_op {
@@ -325,8 +336,6 @@ fn cast<'s, 'a>(
     ir_state: &'s mut IRState<'a>,
     bb: &'s mut BasicBlock<'a>,
 ) -> Result<(), CompilationError<'a>> {
-    println!("Operator: {operator:?}");
-
     if left_info.c_type.derived_types.is_empty() && right_info.c_type.derived_types.is_empty() {
         // Both left and right are arithmetic, perform type promotion
 
@@ -348,13 +357,10 @@ fn cast<'s, 'a>(
             _ => false,
         };
 
-        println!("Casting... {l_type_spec:?} {r_type_spec:?}");
-        let t: VariableInfo = *right_info;
+        // println!("Casting... {l_type_spec:?} {r_type_spec:?}");
         // TODO: This currently only works for integers.
         // TODO: Extend to work with FP and chars.
         if is_assigment {
-            println!("Is assigment ");
-
             // For assignments, always promote the right hand side
             match (l_type_spec, r_type_spec) {
                 (TypeSpecifier::LongDouble, _) => {
@@ -526,7 +532,7 @@ fn ir_gen_expression<'s, 'a>(
                     Constant::I32(val),
                 ),
                 TokenType::LongLiteral(val) => (
-                    specifier_to_type(TypeSpecifier::Short)?,
+                    specifier_to_type(TypeSpecifier::Long)?,
                     IRType::I64,
                     Constant::I64(val),
                 ),
@@ -598,6 +604,8 @@ fn ir_gen_expression<'s, 'a>(
         } => {
             let mut left_info = ir_gen_expression(left, scopes, bb, ir_state, arena)?;
             let mut right_info = ir_gen_expression(right, scopes, bb, ir_state, arena)?;
+
+            println!("IR type before: {:?}", left_info.c_type);
             // TODO: Typecheck in cast?
             cast(
                 &mut left_info,
@@ -606,6 +614,8 @@ fn ir_gen_expression<'s, 'a>(
                 ir_state,
                 bb,
             )?;
+
+            println!("IR type after: {:?}", left_info.c_type);
 
             // left and right now have the same type after casting
             let ir_type = right_info.reg.ir_type;

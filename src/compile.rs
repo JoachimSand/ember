@@ -1,4 +1,5 @@
 use crate::arena::*;
+use crate::colours::*;
 use crate::lexer::*;
 use crate::parser::*;
 use crate::pretty_print::*;

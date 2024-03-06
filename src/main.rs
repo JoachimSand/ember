@@ -5,6 +5,7 @@ use std::fs;
 use std::io;
 
 mod arena;
+mod colours;
 mod compile;
 mod ir;
 mod lexer;
