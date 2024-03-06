@@ -312,6 +312,7 @@ fn cast_operation<'s, 'a>(
     // }
     Ok(VariableInfo {
         c_type: to_info.c_type,
+        is_lvalue: false,
         reg: dst,
     })
     // Ok((specifier_to_type(from_type)?, from_type, dst))
@@ -323,7 +324,7 @@ fn cast<'s, 'a>(
     operator: TokenType,
     ir_state: &'s mut IRState<'a>,
     bb: &'s mut BasicBlock<'a>,
-) -> Result<VariableInfo<'a>, CompilationError<'a>> {
+) -> Result<(), CompilationError<'a>> {
     println!("Operator: {operator:?}");
 
     if left_info.c_type.derived_types.is_empty() && right_info.c_type.derived_types.is_empty() {
@@ -461,38 +462,8 @@ fn cast<'s, 'a>(
         return Err(CompilationError::NotImplemented);
     };
 
+    Ok(())
     // left and right now have the same type
-
-    let ir_type = right_info.reg.ir_type;
-    let dst = new_temp_reg(ir_state, ir_type);
-    let left = Operand::Register(left_info.reg);
-    let right = Operand::Register(right_info.reg);
-
-    let instruction = match operator {
-        TokenType::Plus => Instruction::Add {
-            ir_type,
-            dst,
-            left,
-            right,
-        },
-        TokenType::Asterisk => Instruction::Mul {
-            ir_type,
-            dst,
-            left,
-            right,
-        },
-        TokenType::Assign => Instruction::Assign {
-            dst: left_info.reg,
-            src: right,
-        },
-        _ => panic!("Operator {operator:?} not implemented."),
-    };
-
-    bb.instructions.push(instruction);
-    return Ok(VariableInfo {
-        c_type: right_info.c_type,
-        reg: dst,
-    });
 }
 
 // Generate an expression in 3AC form. The destination of the most recent instruction contains the result.
@@ -540,6 +511,7 @@ fn ir_gen_expression<'s, 'a>(
 
             let res_info = VariableInfo {
                 c_type: var_info.c_type,
+                is_lvalue: true,
                 reg: copy_reg_dst,
             };
 
@@ -592,7 +564,11 @@ fn ir_gen_expression<'s, 'a>(
             let instruction = Instruction::Assign { dst, src };
             bb.instructions.push(instruction);
 
-            let res_info = VariableInfo { c_type, reg: dst };
+            let res_info = VariableInfo {
+                c_type,
+                is_lvalue: false,
+                reg: dst,
+            };
 
             return Ok(res_info);
         }
@@ -622,13 +598,74 @@ fn ir_gen_expression<'s, 'a>(
         } => {
             let mut left_info = ir_gen_expression(left, scopes, bb, ir_state, arena)?;
             let mut right_info = ir_gen_expression(right, scopes, bb, ir_state, arena)?;
+            // TODO: Typecheck in cast?
             cast(
                 &mut left_info,
                 &mut right_info,
                 operator.token_type,
                 ir_state,
                 bb,
-            )
+            )?;
+
+            // left and right now have the same type after casting
+            let ir_type = right_info.reg.ir_type;
+            let left = Operand::Register(left_info.reg);
+            let right = Operand::Register(right_info.reg);
+
+            match operator.token_type {
+                TokenType::Plus => {
+                    let dst = new_temp_reg(ir_state, ir_type);
+                    bb.instructions.push(Instruction::Add {
+                        ir_type,
+                        dst,
+                        left,
+                        right,
+                    });
+                    return Ok(VariableInfo {
+                        c_type: right_info.c_type,
+                        is_lvalue: false,
+                        reg: dst,
+                    });
+                }
+                TokenType::Asterisk => {
+                    let dst = new_temp_reg(ir_state, ir_type);
+                    bb.instructions.push(Instruction::Mul {
+                        ir_type,
+                        dst,
+                        left,
+                        right,
+                    });
+                    return Ok(VariableInfo {
+                        c_type: right_info.c_type,
+                        is_lvalue: false,
+                        reg: dst,
+                    });
+                }
+                TokenType::Assign => {
+                    // We assume here that at generation, every variable is stored on
+                    // the heap. A later optimisation pass will turn these into
+                    // register SSAs.
+                    if left_info.is_lvalue {
+                        bb.instructions.push(Instruction::Store {
+                            src_type: right_info.reg.ir_type,
+                            src: right,
+                            dst_type: left_info.reg.ir_type,
+                            dst: left_info.reg,
+                        });
+                        // While we require the assigment destination to be an lvalue,
+                        // the result of evaluating an expression is the value of the lvalue,
+                        // but this expression may not be reassigned.
+                        return Ok(VariableInfo {
+                            c_type: left_info.c_type,
+                            is_lvalue: false,
+                            reg: left_info.reg,
+                        });
+                    } else {
+                        panic!("Attempted to assign to lvalue.")
+                    }
+                }
+                _ => panic!("Operator {operator:?} not implemented."),
+            }
         }
 
         _ => {
@@ -682,14 +719,21 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                                 panic!("Not implemented.")
                             };
 
-                            let decl_type = Type {
-                                derived_types: init_decl.declarator.derived_types,
-                                specifiers: declaration_specifiers,
+                            // Allocate a stack space for the register.
+                            // This avoids dealing with SSA restrictions
+                            let alloc_instr = Instruction::Alloca {
+                                dst_type: decl_dest.ir_type,
+                                dst: decl_dest,
                             };
+                            bb.instructions.push(alloc_instr);
 
                             let mut decl_info = VariableInfo {
                                 reg: decl_dest,
-                                c_type: decl_type,
+                                is_lvalue: true,
+                                c_type: Type {
+                                    derived_types: init_decl.declarator.derived_types,
+                                    specifiers: declaration_specifiers,
+                                },
                             };
 
                             cast(
@@ -700,14 +744,6 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                                 &mut bb,
                             )?;
 
-                            // Allocate a stack space for the register.
-                            // This avoids dealing with SSA restrictions
-                            let alloc_instr = Instruction::Alloca {
-                                dst_type: decl_dest.ir_type,
-                                dst: decl_dest,
-                            };
-                            bb.instructions.push(alloc_instr);
-
                             // Store the temp register in the stack space for the actual register.
                             let store_instr = Instruction::Store {
                                 src_type: expr_dest_info.reg.ir_type,
@@ -717,17 +753,10 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                             };
                             bb.instructions.push(store_instr);
 
-                            let reg_type_info = VariableInfo {
-                                c_type: Type {
-                                    specifiers: declaration_specifiers,
-                                    derived_types: init_decl.declarator.derived_types,
-                                },
-                                reg: decl_dest,
-                            };
-                            push_reg_type(
+                            push_var_type(
                                 type_scopes,
                                 init_decl.declarator.name.unwrap(),
-                                reg_type_info,
+                                decl_info,
                             )?;
                         }
                     }

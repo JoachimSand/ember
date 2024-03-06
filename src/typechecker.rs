@@ -26,6 +26,7 @@ pub struct ExprType<'t> {
 #[derive(Clone, Copy)]
 pub struct VariableInfo<'t> {
     pub c_type: Type<'t>,
+    pub is_lvalue: bool,
     // pub ir_type: IRType,
     pub reg: Register<'t>,
 }
@@ -55,7 +56,7 @@ pub fn pop_scope(scopes: &mut Scopes) {
 }
 
 // Note: By variable we refer to functions as well
-pub fn push_reg_type<'r, 's: 'r, 't: 's>(
+pub fn push_var_type<'r, 's: 'r, 't: 's>(
     scopes: &'r mut Scopes<'s, 't>,
     var_name: &'t str,
     var_type: VariableInfo<'t>,
