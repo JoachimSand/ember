@@ -98,6 +98,11 @@ impl<'v> Display for Operand<'v> {
     }
 }
 
+#[derive(Clone, Debug, Copy, PartialEq)]
+pub enum ArithmeticFlags {
+    Nsw, // No signed wrap
+}
+
 // TODO: Consider removing IRType for some of these operations
 // where the dst variable contains the relevant IRType.
 #[derive(Clone, Debug, Copy, PartialEq)]
@@ -119,16 +124,24 @@ pub enum Instruction<'i> {
         dst: Register<'i>,
     },
     Add {
-        ir_type: IRType,
         dst: Register<'i>,
+        ir_type: IRType,
+        flags: Option<ArithmeticFlags>,
         left: Operand<'i>,
         right: Operand<'i>,
     },
     Mul {
-        ir_type: IRType,
         dst: Register<'i>,
+        ir_type: IRType,
+        flags: Option<ArithmeticFlags>,
         left: Operand<'i>,
         right: Operand<'i>,
+    },
+    ZeroExtend {
+        dst: Register<'i>,
+        src: Operand<'i>,
+        src_type: IRType,
+        dst_type: IRType,
     },
     SignExtend {
         dst: Register<'i>,
@@ -167,6 +180,8 @@ impl<'i> Display for Instruction<'i> {
             Instruction::Store { .. } => write!(f, "store")?,
             Instruction::Add { .. } => write!(f, "add")?,
             Instruction::Mul { .. } => write!(f, "mul")?,
+            Instruction::SignExtend { .. } => write!(f, "sext")?,
+            Instruction::ZeroExtend { .. } => write!(f, "zext")?,
             _ => return write!(f, "{FORMAT_END}Display unimpl. for {self:?}"),
         }
         write!(f, "{FORMAT_END}")
@@ -210,25 +225,33 @@ fn print_basic_block(bb: &BasicBlock) {
                 src,
             } => println!("{dst} = {instruction} {dst_type:?}, {src_type:?} {src}"),
             Instruction::Add {
-                ir_type,
                 dst,
+                ir_type,
+                flags,
                 left,
                 right,
             }
             | Instruction::Mul {
-                ir_type,
                 dst,
+                ir_type,
+                flags,
                 left,
                 right,
-            } => println!("{dst} = {instruction} {ir_type:?}, {left} {right}"),
+            } => println!("{dst} = {instruction} {flags:?} {ir_type:?}, {left} {right}"),
             Instruction::Assign { dst, src } => println!("{dst} = {src}"),
             Instruction::SignExtend {
                 dst,
                 src,
                 src_type,
                 dst_type,
+            }
+            | Instruction::ZeroExtend {
+                dst,
+                src,
+                src_type,
+                dst_type,
             } => {
-                println!("{dst} = {RED_START}sext{FORMAT_END} {src} {src_type:?} to {dst_type:?}")
+                println!("{dst} = {instruction} {src} {src_type:?} to {dst_type:?}")
             }
             Instruction::Truncate {
                 dst,
@@ -281,11 +304,12 @@ fn new_temp_reg<'s, 'a: 's>(ir_state: &'s mut IRState<'a>, ir_type: IRType) -> R
 enum CastOp {
     SignExtend,
     Trunc,
+    ZeroExtend,
 }
 
 fn cast_operation<'s, 'a>(
     from_info: VariableInfo<'a>,
-    to_info: VariableInfo<'a>,
+    to_type: Type<'a>,
     cast_op: CastOp,
     ir_state: &'s mut IRState<'a>,
     bb: &'s mut BasicBlock<'a>,
@@ -296,23 +320,29 @@ fn cast_operation<'s, 'a>(
     //         (r_type_spec, l_type_spec, right_reg)
     //     }
     // };
-    let to_type = specifier_to_ir_type(&to_info.c_type.specifiers.type_specifier);
-    let from_type = specifier_to_ir_type(&from_info.c_type.specifiers.type_specifier);
-    println!("Casting from {from_type:?} to {to_type:?}");
-    let dst = new_temp_reg(ir_state, from_type);
+    let to_ir_type = specifier_to_ir_type(&to_type.specifiers.type_specifier);
+    let from_ir_type = specifier_to_ir_type(&from_info.c_type.specifiers.type_specifier);
+    println!("Casting from {from_ir_type:?} to {to_type:?}");
+    let dst = new_temp_reg(ir_state, to_ir_type);
 
     let cast_instr = match cast_op {
+        CastOp::ZeroExtend => Instruction::ZeroExtend {
+            dst,
+            src: Operand::Register(from_info.reg),
+            src_type: from_ir_type,
+            dst_type: to_ir_type,
+        },
         CastOp::SignExtend => Instruction::SignExtend {
             dst,
             src: Operand::Register(from_info.reg),
-            src_type: from_type,
-            dst_type: to_type,
+            src_type: from_ir_type,
+            dst_type: to_ir_type,
         },
         CastOp::Trunc => Instruction::Truncate {
             dst,
             src: Operand::Register(from_info.reg),
-            src_type: from_type,
-            dst_type: to_type,
+            src_type: from_ir_type,
+            dst_type: to_ir_type,
         },
     };
     bb.instructions.push(cast_instr);
@@ -322,11 +352,41 @@ fn cast_operation<'s, 'a>(
     //     PromotionDirection::RightToLeft => right_reg = dst,
     // }
     Ok(VariableInfo {
-        c_type: to_info.c_type,
+        c_type: to_type,
         is_lvalue: false,
         reg: dst,
     })
     // Ok((specifier_to_type(from_type)?, from_type, dst))
+}
+
+// const INT_SPECIFIER = TypeSpecifier::Int;i
+const INT_SPECIFIERS: Specifiers = Specifiers {
+    type_specifier: TypeSpecifier::Int,
+    is_const: false,
+    is_volatile: false,
+    is_typedef: false,
+    is_extern: false,
+    is_static: false,
+};
+const INT_TYPE: Type = Type {
+    derived_types: &[],
+    specifiers: &INT_SPECIFIERS,
+};
+
+fn integral_promotion<'s, 'a>(
+    var_info: &VariableInfo<'a>,
+    ir_state: &'s mut IRState<'a>,
+    bb: &'s mut BasicBlock<'a>,
+) -> Result<VariableInfo<'a>, CompilationError<'a>> {
+    match var_info.c_type.specifiers.type_specifier {
+        TypeSpecifier::SignedChar
+        | TypeSpecifier::UnsignedChar
+        | TypeSpecifier::Short
+        | TypeSpecifier::UnsignedShort => {
+            cast_operation(*var_info, INT_TYPE, CastOp::SignExtend, ir_state, bb)
+        }
+        _ => Ok(*var_info),
+    }
 }
 
 fn cast<'s, 'a>(
@@ -357,119 +417,310 @@ fn cast<'s, 'a>(
             _ => false,
         };
 
-        // println!("Casting... {l_type_spec:?} {r_type_spec:?}");
+        if is_assigment && left_info.is_lvalue == false {
+            return Err(CompilationError::AssigningToRValue);
+        }
+
+        println!("Casting... {l_type_spec:?} {r_type_spec:?}");
+
+        // Usual Arithmetic Conversions from https://wiki.sei.cmu.edu/confluence/display/c/INT02-C.+Understand+integer+conversion+rules
+        // which paraphrases the C89 standard http://port70.net/%7Ensz/c/c89/c89-draft.html#3.2.1.5
+
+        // The usual arithmetic conversions are rules that provide a mechanism to yield a common type when both operands
+        // of a binary operator are balanced to a common type or the second and third operands of the
+        // conditional operator ( ? : ) are balanced to a common type.
+        // Conversions involve two operands of different types, and one or both operands may be converted.
+        // Many operators that accept arithmetic operands perform conversions using the usual arithmetic conversions.
+        // After integer promotions are performed on both operands, the following rules are applied to the promoted operands:
+
+        //     1. If both operands have the same type, no further conversion is needed.
+        //     2. If both operands are of the same integer type (signed or unsigned), the operand with
+        //        the type of lesser integer conversion rank is converted to the type of the operand with greater rank.
+        //     3. If the operand that has unsigned integer type has rank greater than or equal to the rank of the type
+        //        of the other operand, the operand with signed integer type is converted to the type of the operand
+        //        with unsigned integer type.
+        //     4. If the type of the operand with signed integer type can represent all of the values of the type of the
+        //        operand with unsigned integer type, the operand with unsigned integer type is converted to the type
+        //        of the operand with signed integer type.
+        //     5. Otherwise, both operands are converted to the unsigned integer type corresponding to the type of the
+        //        operand with signed integer type.
+
+        // Integral promotions
+        *right_info = integral_promotion(&right_info, ir_state, bb)?;
+
+        if let TokenType::Assign = operator {
+            ()
+        } else {
+            *left_info = integral_promotion(&left_info, ir_state, bb)?;
+        }
+
+        if l_type_spec == r_type_spec {
+            return Ok(());
+        }
+
         // TODO: This currently only works for integers.
         // TODO: Extend to work with FP and chars.
-        if is_assigment {
-            // For assignments, always promote the right hand side
-            match (l_type_spec, r_type_spec) {
-                (TypeSpecifier::LongDouble, _) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
-
-                (TypeSpecifier::Double, _) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
-
-                (TypeSpecifier::Float, _) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
-
-                // Integral promotions start
-                // (TypeSpecifer::Char, _) =>
-                // Integral promotions end
-                (TypeSpecifier::UnsignedLong, _) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
-
-                // We use 64 bit long and 32 bit int -> hence long can represent all values of an unsigned int.
-                // Convert the unsigned int to long
-                (TypeSpecifier::Long, TypeSpecifier::UnsignedInt) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
-                (TypeSpecifier::Long, TypeSpecifier::Int) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
-                (TypeSpecifier::UnsignedInt, TypeSpecifier::Long) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::Trunc, ir_state, bb)?
-                }
-
-                (TypeSpecifier::Int, TypeSpecifier::Int) => (),
-                _ => panic!("Not implemented."),
+        // TODO: Truncation cases could maybe be combined.
+        match (is_assigment, l_type_spec, r_type_spec) {
+            (_, TypeSpecifier::LongDouble, _) => {
+                panic!("Not implemented");
+                // *right_info =
+                //     cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
             }
-        } else {
-            match (l_type_spec, r_type_spec) {
-                (TypeSpecifier::LongDouble, _) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
-                (_, TypeSpecifier::LongDouble) => {
-                    *left_info =
-                        cast_operation(*left_info, *right_info, CastOp::SignExtend, ir_state, bb)?
-                }
+            (_, _, TypeSpecifier::LongDouble) => {
+                panic!("Not implemented");
+                // *left_info =
+                //     cast_operation(*left_info, *right_info, CastOp::SignExtend, ir_state, bb)?
+            }
 
-                (TypeSpecifier::Double, _) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
-                (_, TypeSpecifier::Double) => {
-                    *left_info =
-                        cast_operation(*left_info, *right_info, CastOp::SignExtend, ir_state, bb)?
-                }
+            (_, TypeSpecifier::Double, _) => {
+                panic!("Not implemented");
+                // *right_info =
+                //     cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
+            }
+            (_, _, TypeSpecifier::Double) => {
+                panic!("Not implemented");
+                // *left_info =
+                //     cast_operation(*left_info, *right_info, CastOp::SignExtend, ir_state, bb)?
+            }
 
-                (TypeSpecifier::Float, _) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
-                (_, TypeSpecifier::Float) => {
-                    *left_info =
-                        cast_operation(*left_info, *right_info, CastOp::SignExtend, ir_state, bb)?
-                }
+            (_, TypeSpecifier::Float, _) => {
+                panic!("Not implemented");
+                // *right_info =
+                //     cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
+            }
+            (_, _, TypeSpecifier::Float) => {
+                panic!("Not implemented");
+                // *left_info =
+                //     cast_operation(*left_info, *right_info, CastOp::SignExtend, ir_state, bb)?;
+            }
 
-                // Integral promotions start
-                // (TypeSpecifer::Char, _) =>
-                // Integral promotions end
-                (TypeSpecifier::UnsignedLong, _) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
-                (_, TypeSpecifier::UnsignedLong) => {
-                    *left_info =
-                        cast_operation(*left_info, *right_info, CastOp::SignExtend, ir_state, bb)?
-                }
-                // We use 64 bit long and 32 bit int -> hence long can represent all values of an unsigned int.
-                // Convert the unsigned int to long
-                (TypeSpecifier::Long, TypeSpecifier::UnsignedInt) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
+            // UNSIGNED INTEGER PROMOTIONS
+            (
+                _,
+                TypeSpecifier::UnsignedLongLong,
+                TypeSpecifier::UnsignedLong | TypeSpecifier::UnsignedInt,
+            )
+            | (_, TypeSpecifier::UnsignedLong, TypeSpecifier::UnsignedInt) => {
+                *right_info = cast_operation(
+                    *right_info,
+                    left_info.c_type,
+                    CastOp::ZeroExtend,
+                    ir_state,
+                    bb,
+                )?
+            }
 
-                (TypeSpecifier::Long, TypeSpecifier::Int) => {
-                    *right_info =
-                        cast_operation(*right_info, *left_info, CastOp::SignExtend, ir_state, bb)?
-                }
-                (TypeSpecifier::UnsignedInt, TypeSpecifier::Long) => {
-                    *left_info =
-                        cast_operation(*left_info, *right_info, CastOp::SignExtend, ir_state, bb)?
-                }
+            (
+                false,
+                TypeSpecifier::UnsignedLong | TypeSpecifier::UnsignedInt,
+                TypeSpecifier::UnsignedLongLong,
+            )
+            | (false, TypeSpecifier::UnsignedInt, TypeSpecifier::UnsignedLong) => {
+                *left_info = cast_operation(
+                    *left_info,
+                    right_info.c_type,
+                    CastOp::ZeroExtend,
+                    ir_state,
+                    bb,
+                )?
+            }
 
-                (TypeSpecifier::Int, TypeSpecifier::Int) => (),
-                _ => panic!("Not implemented"),
+            (
+                true,
+                TypeSpecifier::UnsignedLong | TypeSpecifier::UnsignedInt,
+                TypeSpecifier::UnsignedLongLong,
+            )
+            | (true, TypeSpecifier::UnsignedInt, TypeSpecifier::UnsignedLong) => {
+                *right_info =
+                    cast_operation(*right_info, left_info.c_type, CastOp::Trunc, ir_state, bb)?
+            }
+
+            // SIGNED INTEGER PROMOTIONS
+            (_, TypeSpecifier::LongLong, TypeSpecifier::Long | TypeSpecifier::Int)
+            | (_, TypeSpecifier::Long, TypeSpecifier::Int) => {
+                *right_info = cast_operation(
+                    *right_info,
+                    left_info.c_type,
+                    CastOp::SignExtend,
+                    ir_state,
+                    bb,
+                )?
+            }
+
+            (false, TypeSpecifier::Long | TypeSpecifier::Int, TypeSpecifier::LongLong)
+            | (false, TypeSpecifier::Int, TypeSpecifier::Long) => {
+                *left_info = cast_operation(
+                    *left_info,
+                    right_info.c_type,
+                    CastOp::SignExtend,
+                    ir_state,
+                    bb,
+                )?
+            }
+
+            (true, TypeSpecifier::Long | TypeSpecifier::Int, TypeSpecifier::LongLong)
+            | (true, TypeSpecifier::Int, TypeSpecifier::Long) => {
+                *right_info =
+                    cast_operation(*right_info, left_info.c_type, CastOp::Trunc, ir_state, bb)?
+            }
+
+            // CONVERSIONS FROM SIGNED TO UNSIGNED
+            // Cases where the unsigned operand has a greater or equal rank ->
+            // converted the signed operand to unsigned.
+
+            // When equal rank, just interpret the signed operand as unsigned
+            (_, TypeSpecifier::UnsignedInt, TypeSpecifier::Int)
+            | (_, TypeSpecifier::UnsignedLong, TypeSpecifier::Long)
+            | (_, TypeSpecifier::UnsignedLongLong, TypeSpecifier::LongLong) => {
+                *right_info = VariableInfo {
+                    c_type: left_info.c_type,
+                    is_lvalue: right_info.is_lvalue,
+                    reg: right_info.reg,
+                };
+            }
+
+            (false, TypeSpecifier::Int, TypeSpecifier::UnsignedInt)
+            | (false, TypeSpecifier::Long, TypeSpecifier::UnsignedLong)
+            | (false, TypeSpecifier::LongLong, TypeSpecifier::UnsignedLongLong) => {
+                *left_info = VariableInfo {
+                    c_type: right_info.c_type,
+                    is_lvalue: left_info.is_lvalue,
+                    reg: left_info.reg,
+                };
+            }
+
+            (true, TypeSpecifier::Int, TypeSpecifier::UnsignedInt)
+            | (true, TypeSpecifier::Long, TypeSpecifier::UnsignedLong)
+            | (true, TypeSpecifier::LongLong, TypeSpecifier::UnsignedLongLong) => {
+                *right_info =
+                    cast_operation(*right_info, left_info.c_type, CastOp::Trunc, ir_state, bb)?
+            }
+
+            // When greater rank, zero extend the signed operand
+            (
+                _,
+                TypeSpecifier::UnsignedLong | TypeSpecifier::UnsignedLongLong,
+                TypeSpecifier::Int,
+            )
+            | (_, TypeSpecifier::UnsignedLongLong, TypeSpecifier::Long) => {
+                *right_info = cast_operation(
+                    *right_info,
+                    left_info.c_type,
+                    CastOp::ZeroExtend,
+                    ir_state,
+                    bb,
+                )?
+            }
+
+            (
+                false,
+                TypeSpecifier::Int,
+                TypeSpecifier::UnsignedLong | TypeSpecifier::UnsignedLongLong,
+            )
+            | (false, TypeSpecifier::Long, TypeSpecifier::UnsignedLongLong) => {
+                *left_info = cast_operation(
+                    *left_info,
+                    right_info.c_type,
+                    CastOp::ZeroExtend,
+                    ir_state,
+                    bb,
+                )?
+            }
+
+            (
+                true,
+                TypeSpecifier::Int,
+                TypeSpecifier::UnsignedLong | TypeSpecifier::UnsignedLongLong,
+            )
+            | (true, TypeSpecifier::Long, TypeSpecifier::UnsignedLongLong) => {
+                *right_info =
+                    cast_operation(*right_info, left_info.c_type, CastOp::Trunc, ir_state, bb)?
+            }
+
+            // UNSIGNED TO SIGNED CONVERSION
+
+            // We use 64 bit long and 32 bit int -> hence long can represent all values of an unsigned int.
+            // Convert the unsigned int to long
+            (_, TypeSpecifier::Long | TypeSpecifier::LongLong, TypeSpecifier::UnsignedInt)
+            | (_, TypeSpecifier::LongLong, TypeSpecifier::UnsignedLong) => {
+                *right_info = cast_operation(
+                    *right_info,
+                    left_info.c_type,
+                    CastOp::ZeroExtend,
+                    ir_state,
+                    bb,
+                )?
+            }
+            (false, TypeSpecifier::UnsignedInt, TypeSpecifier::Long | TypeSpecifier::LongLong)
+            | (false, TypeSpecifier::UnsignedLong, TypeSpecifier::LongLong) => {
+                *right_info = cast_operation(
+                    *right_info,
+                    left_info.c_type,
+                    CastOp::ZeroExtend,
+                    ir_state,
+                    bb,
+                )?
+            }
+            (true, TypeSpecifier::UnsignedInt, TypeSpecifier::Long | TypeSpecifier::LongLong)
+            | (true, TypeSpecifier::UnsignedLong, TypeSpecifier::LongLong) => {
+                *right_info =
+                    cast_operation(*right_info, left_info.c_type, CastOp::Trunc, ir_state, bb)?
+            }
+
+            (_, TypeSpecifier::Int, TypeSpecifier::Int)
+            | (_, TypeSpecifier::UnsignedInt, TypeSpecifier::UnsignedInt)
+            | (_, TypeSpecifier::Long, TypeSpecifier::Long)
+            | (_, TypeSpecifier::UnsignedLong, TypeSpecifier::UnsignedLong)
+            | (_, TypeSpecifier::LongLong, TypeSpecifier::LongLong)
+            | (_, TypeSpecifier::UnsignedLongLong, TypeSpecifier::UnsignedLongLong)
+            | (_, TypeSpecifier::LongDouble, TypeSpecifier::LongDouble)
+            | (_, TypeSpecifier::Double, TypeSpecifier::Double)
+            | (_, TypeSpecifier::Float, TypeSpecifier::Float) => (),
+
+            (_, TypeSpecifier::Void, _)
+            | (_, _, TypeSpecifier::Void)
+            | (_, TypeSpecifier::TypeAlias(..), _)
+            | (_, _, TypeSpecifier::TypeAlias(..))
+            | (_, TypeSpecifier::Enum { .. }, _)
+            | (_, _, TypeSpecifier::Enum { .. })
+            | (_, TypeSpecifier::Struct { .. }, _)
+            | (_, _, TypeSpecifier::Struct { .. })
+            | (_, TypeSpecifier::None, _)
+            | (_, _, TypeSpecifier::None) => {
+                panic!("Casting not implemented for {l_type_spec:?} and {r_type_spec:?}")
+            }
+            (_, TypeSpecifier::SignedChar, _)
+            | (_, _, TypeSpecifier::SignedChar)
+            | (_, TypeSpecifier::UnsignedChar, _)
+            | (_, _, TypeSpecifier::UnsignedChar)
+            | (_, TypeSpecifier::Short, _)
+            | (_, _, TypeSpecifier::Short)
+            | (_, TypeSpecifier::UnsignedShort, _)
+            | (_, _, TypeSpecifier::UnsignedShort) => {
+                unreachable!("We should have dealt with these types during integral promotion.")
             }
         }
     } else {
-        return Err(CompilationError::NotImplemented);
+        panic!("Casting not implemented for non-primitive types")
     };
 
     Ok(())
     // left and right now have the same type
+}
+fn specifier_to_type<'s, 'a>(
+    type_specifier: TypeSpecifier<'a>,
+    arena: &'a Arena,
+) -> Result<Type<'a>, CompilationError<'a>> {
+    let specifiers = Specifiers {
+        type_specifier,
+        ..Default::default()
+    };
+    let t = Type {
+        specifiers: arena.push(specifiers)?,
+        derived_types: &[],
+    };
+    return Ok(t);
 }
 
 // Generate an expression in 3AC form. The destination of the most recent instruction contains the result.
@@ -481,17 +732,6 @@ fn ir_gen_expression<'s, 'a>(
     arena: &'a Arena,
 ) -> Result<VariableInfo<'a>, CompilationError<'a>> {
     // Used for allocating simpy types
-    let specifier_to_type = |type_specifier| -> Result<Type, CompilationError> {
-        let specifiers = Specifiers {
-            type_specifier,
-            ..Default::default()
-        };
-        let t = Type {
-            specifiers: arena.push(specifiers)?,
-            derived_types: &[],
-        };
-        return Ok(t);
-    };
 
     match *expr {
         Node::Identifier { name } => {
@@ -524,40 +764,41 @@ fn ir_gen_expression<'s, 'a>(
             return Ok(res_info);
         }
 
+        // TODO: These specifier_to_type calls could all just be references to const literal types rather than allocation on the arena
         Node::Literal(literal) => {
             let (c_type, ir_type, constant) = match literal.token_type {
                 TokenType::IntLiteral(val) => (
-                    specifier_to_type(TypeSpecifier::Int)?,
+                    specifier_to_type(TypeSpecifier::Int, arena)?,
                     IRType::I32,
                     Constant::I32(val),
                 ),
                 TokenType::LongLiteral(val) => (
-                    specifier_to_type(TypeSpecifier::Long)?,
+                    specifier_to_type(TypeSpecifier::Long, arena)?,
                     IRType::I64,
                     Constant::I64(val),
                 ),
                 TokenType::UIntLiteral(val) => (
-                    specifier_to_type(TypeSpecifier::UnsignedInt)?,
+                    specifier_to_type(TypeSpecifier::UnsignedInt, arena)?,
                     IRType::I32,
                     Constant::I32(i32::from_be_bytes(val.to_be_bytes())),
                 ),
                 TokenType::ULongLiteral(val) => (
-                    specifier_to_type(TypeSpecifier::UnsignedLong)?,
+                    specifier_to_type(TypeSpecifier::UnsignedLong, arena)?,
                     IRType::I64,
                     Constant::I64(i64::from_be_bytes(val.to_be_bytes())),
                 ),
                 TokenType::CharLiteral(val) => (
-                    specifier_to_type(TypeSpecifier::SignedChar)?,
+                    specifier_to_type(TypeSpecifier::SignedChar, arena)?,
                     IRType::I8,
                     Constant::I8(val as i8),
                 ),
                 TokenType::FloatLiteral(val) => (
-                    specifier_to_type(TypeSpecifier::Float)?,
+                    specifier_to_type(TypeSpecifier::Float, arena)?,
                     IRType::F32,
                     Constant::F32(val),
                 ),
                 TokenType::DoubleLiteral(val) => (
-                    specifier_to_type(TypeSpecifier::Double)?,
+                    specifier_to_type(TypeSpecifier::Double, arena)?,
                     IRType::F64,
                     Constant::F64(val),
                 ),
@@ -602,10 +843,10 @@ fn ir_gen_expression<'s, 'a>(
             left,
             right,
         } => {
+            println!("INFIX WITH {:?}", operator.token_type);
             let mut left_info = ir_gen_expression(left, scopes, bb, ir_state, arena)?;
             let mut right_info = ir_gen_expression(right, scopes, bb, ir_state, arena)?;
 
-            println!("IR type before: {:?}", left_info.c_type);
             // TODO: Typecheck in cast?
             cast(
                 &mut left_info,
@@ -615,19 +856,43 @@ fn ir_gen_expression<'s, 'a>(
                 bb,
             )?;
 
-            println!("IR type after: {:?}", left_info.c_type);
-
             // left and right now have the same type after casting
             let ir_type = right_info.reg.ir_type;
             let left = Operand::Register(left_info.reg);
             let right = Operand::Register(right_info.reg);
 
+            if left_info.c_type.derived_types.is_empty() == false
+                || right_info.c_type.derived_types.is_empty() == false
+            {
+                panic!("We do not yet perform infix operations on types with derived types.");
+            }
+            // TODO: Support floats
+            let flags = match (
+                left_info.c_type.specifiers.type_specifier,
+                right_info.c_type.specifiers.type_specifier,
+            ) {
+                (
+                    TypeSpecifier::Short
+                    | TypeSpecifier::Int
+                    | TypeSpecifier::Long
+                    | TypeSpecifier::LongLong,
+                    TypeSpecifier::Short
+                    | TypeSpecifier::Int
+                    | TypeSpecifier::Long
+                    | TypeSpecifier::LongLong,
+                ) => Some(ArithmeticFlags::Nsw),
+                _ => None,
+            };
+
             match operator.token_type {
                 TokenType::Plus => {
                     let dst = new_temp_reg(ir_state, ir_type);
+
+                    // Signed integer overflow is not allowed in C90.
                     bb.instructions.push(Instruction::Add {
-                        ir_type,
                         dst,
+                        ir_type,
+                        flags,
                         left,
                         right,
                     });
@@ -640,8 +905,9 @@ fn ir_gen_expression<'s, 'a>(
                 TokenType::Asterisk => {
                     let dst = new_temp_reg(ir_state, ir_type);
                     bb.instructions.push(Instruction::Mul {
-                        ir_type,
                         dst,
+                        ir_type,
+                        flags,
                         left,
                         right,
                     });

@@ -36,6 +36,7 @@ pub enum CompilationError<'e> {
     NoDefinitionFound,
     InvalidASTStructure,
     NoScopes,
+    AssigningToRValue,
 }
 
 fn display_token_error(token: Token, lexer: &mut Lexer, msg: String) {

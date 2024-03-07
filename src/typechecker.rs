@@ -23,7 +23,7 @@ pub struct ExprType<'t> {
     pub derived_types: Vec<DerivedType<'t>>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct VariableInfo<'t> {
     pub c_type: Type<'t>,
     pub is_lvalue: bool,
