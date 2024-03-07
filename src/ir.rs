@@ -989,7 +989,7 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                                     disp_name: Some(declarator_name),
                                     uuid: next_uuid(ir_state),
                                     version: None,
-                                    ir_type: expr_dest_info.reg.ir_type,
+                                    ir_type: IRType::Ptr,
                                 }
                             } else {
                                 panic!("Not implemented.")
@@ -998,7 +998,7 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                             // Allocate a stack space for the register.
                             // This avoids dealing with SSA restrictions
                             let alloc_instr = Instruction::Alloca {
-                                dst_type: decl_dest.ir_type,
+                                dst_type: expr_dest_info.reg.ir_type,
                                 dst: decl_dest,
                             };
                             bb.instructions.push(alloc_instr);
