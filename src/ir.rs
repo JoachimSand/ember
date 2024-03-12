@@ -935,24 +935,6 @@ fn ir_gen_expression<'i, 's, 'a>(
             return Ok(res_info);
         }
 
-        // First, if either operand has type long double, the other operand is converted to long double .
-        // Otherwise, if either operand has type double, the other operand is converted to double.
-        // Otherwise, if either operand has type float, the other operand is converted to float.
-        // Otherwise, the integral promotions are performed on both operands.
-        // Then the following rules are applied:
-        // If either operand has type unsigned long int, the other operand is converted to unsigned long int.
-        // Otherwise, if one operand has type long int and the other has type unsigned int, if a long int can
-        // represent all values of an unsigned int, the operand of type unsigned int is converted to long int
-        // ; if a long int cannot represent all the values of an unsigned int, both operands are converted to unsigned long int.
-        // Otherwise, if either operand has type long int, the other operand is converted to long int.
-        // Otherwise, if either operand has type unsigned int, the other operand is converted to unsigned int.
-        // Otherwise, both operands have type int.
-
-        // TODO: Char/Short promotion
-        // A char, a short int, or an int bit-field, or their signed or unsigned varieties, or an object that has enumeration type,
-        // may be used in an expression wherever an int or unsigned int may be used.
-        // If an int can represent all values of the original type, the value is converted to an int;
-        // otherwise it is converted to an unsigned int. These are called the integral promotions
         Node::Infix {
             operator,
             left,
@@ -971,7 +953,7 @@ fn ir_gen_expression<'i, 's, 'a>(
                 cur_bb,
             )?;
 
-            // left and right now have the same type after casting
+            // Left and right now have the same type after casting
             let ir_type = right_info.reg.ir_type;
             let left = Operand::Register(left_info.reg);
             let right = Operand::Register(right_info.reg);
@@ -1056,6 +1038,23 @@ fn ir_gen_expression<'i, 's, 'a>(
                     } else {
                         panic!("Attempted to assign to lvalue.")
                     }
+                }
+                TokenType::Equals => {
+                    let dst = new_temp_reg(ir_state, ir_type);
+                    let cmp_instr = Instruction::Icmp {
+                        dst,
+                        comparison: ComparisonKind::Eq,
+                        op_type: right_info.reg.ir_type,
+                        op1: right,
+                        op2: left,
+                    };
+
+                    ir_state.blocks[cur_bb].instructions.push(cmp_instr);
+                    return Ok(VariableInfo {
+                        c_type: right_info.c_type,
+                        is_lvalue: false,
+                        reg: dst,
+                    });
                 }
                 _ => panic!("Operator {operator:?} not implemented."),
             }
