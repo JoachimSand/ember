@@ -295,9 +295,9 @@ pub fn print_ast(start: &Node, prefix: String, is_last: bool) {
 
         Node::IfStatementList(list) => {
             println!("{}", red!("If Statement List"));
-            let print_if_statement = |child: &IfNode, child_prefix: String, _: bool| {
+            let print_if_statement = |child: &IfNode, child_prefix: String, is_last: bool| {
                 print_ast(child.condition, child_prefix.clone(), false);
-                print_ast(child.statement, child_prefix, true);
+                print_ast(child.statement, child_prefix, is_last);
             };
             print_ast_list(list, new_prefix.clone(), true, print_if_statement);
         }
