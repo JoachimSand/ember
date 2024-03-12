@@ -36,7 +36,7 @@ ret %reg
 
 #[derive(Clone, Debug, Copy, PartialEq)]
 pub enum IRType {
-    Bool,
+    I1,
     I8,
     I16,
     I32,
@@ -72,7 +72,7 @@ impl<'v> Display for Register<'v> {
 
 #[derive(Clone, Debug, Copy, PartialEq)]
 pub enum Constant {
-    Bool(bool),
+    I1(bool),
     I8(i8),
     I16(i16),
     I32(i32),
@@ -81,6 +81,21 @@ pub enum Constant {
     F32(f32),
     F64(f64),
     //F128(f128),
+}
+
+fn int_to_constant(val: i64, ir_type: IRType) -> Constant {
+    use Constant::*;
+    match ir_type {
+        IRType::I1 => I1(val != 0),
+        IRType::I8 => I8(val as i8),
+        IRType::I16 => I16(val as i16),
+        IRType::I32 => I32(val as i32),
+        IRType::I64 | IRType::Ptr => I64(val as i64),
+        IRType::I128 => I128(val as i128),
+        IRType::F32 => F32(val as f32),
+        IRType::F64 => F64(val as f64),
+        _ => panic!("Int to constant for {ir_type:?} not implemented."),
+    }
 }
 
 #[derive(Clone, Debug, Copy, PartialEq)]
@@ -101,6 +116,18 @@ impl<'v> Display for Operand<'v> {
 #[derive(Clone, Debug, Copy, PartialEq)]
 pub enum ArithmeticFlags {
     Nsw, // No signed wrap
+}
+
+#[derive(Clone, Debug, Copy, PartialEq)]
+pub enum ComparisonKind {
+    Eq,
+}
+
+type BlockID = usize;
+
+fn get_next_block<'a>(blocks: &mut Vec<BasicBlockData<'a>>) -> BlockID {
+    blocks.push(new_bb());
+    return blocks.len() - 1;
 }
 
 // TODO: Consider removing IRType for some of these operations
@@ -155,7 +182,7 @@ pub enum Instruction<'i> {
         src_type: IRType,
         dst_type: IRType,
     },
-    SiToFp {
+    _SiToFp {
         dst: Register<'i>,
         src: Operand<'i>,
         src_type: IRType,
@@ -165,9 +192,29 @@ pub enum Instruction<'i> {
         dst: Register<'i>,
         src: Operand<'i>,
     },
+    Icmp {
+        dst: Register<'i>,
+        comparison: ComparisonKind,
+        op_type: IRType,
+        op1: Operand<'i>,
+        op2: Operand<'i>,
+    },
     _FunctionCall {
         dst: Register<'i>,
         parameters: &'i [&'i Register<'i>],
+    },
+}
+
+// Instructions that terminate a basic block
+#[derive(Clone, Debug, Copy, PartialEq)]
+pub enum Terminator<'t> {
+    Brcond {
+        condition: Operand<'t>,
+        if_true_dst: BlockID,
+        if_false_dst: BlockID,
+    },
+    Br {
+        dst: BlockID,
     },
 }
 
@@ -182,6 +229,19 @@ impl<'i> Display for Instruction<'i> {
             Instruction::Mul { .. } => write!(f, "mul")?,
             Instruction::SignExtend { .. } => write!(f, "sext")?,
             Instruction::ZeroExtend { .. } => write!(f, "zext")?,
+            Instruction::Icmp { .. } => write!(f, "icmp")?,
+            _ => return write!(f, "{FORMAT_END}Display unimpl. for {self:?}"),
+        }
+        write!(f, "{FORMAT_END}")
+    }
+}
+
+impl<'i> Display for Terminator<'i> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{RED_START}")?;
+        match self {
+            Terminator::Brcond { .. } => write!(f, "br")?,
+            Terminator::Br { .. } => write!(f, "br")?,
             _ => return write!(f, "{FORMAT_END}Display unimpl. for {self:?}"),
         }
         write!(f, "{FORMAT_END}")
@@ -189,17 +249,30 @@ impl<'i> Display for Instruction<'i> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct BasicBlock<'b> {
+pub struct BasicBlockData<'b> {
     instructions: Vec<Instruction<'b>>,
+
+    terminator: Option<Terminator<'b>>,
+    // successors: Vec<BlockID>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct IRState<'i> {
+fn new_bb<'b>() -> BasicBlockData<'b> {
+    BasicBlockData {
+        instructions: Vec::<Instruction>::new(),
+        // successors: Vec::<BlockID>::new(),
+        terminator: None,
+    }
+}
+
+pub struct IRState<'s, 'a> {
     uuid_count: u32,
-    blocks: Vec<BasicBlock<'i>>,
+    scopes: &'s mut Scopes<'a, 'a>,
+    blocks: &'s mut Vec<BasicBlockData<'a>>,
+    arena: &'a Arena,
+    // blocks: Vec<&'s BasicBlock<'a>>,
 }
 
-fn print_basic_block(bb: &BasicBlock) {
+fn print_basic_block(bb: &BasicBlockData) {
     for instruction in &bb.instructions {
         match instruction {
             Instruction::Alloca { dst_type, dst } => {
@@ -261,7 +334,24 @@ fn print_basic_block(bb: &BasicBlock) {
             } => {
                 println!("{dst} = {RED_START}trunc{FORMAT_END} {src_type:?} {src} to {dst_type:?}")
             }
+            Instruction::Icmp {
+                dst,
+                comparison,
+                op_type,
+                op1,
+                op2,
+            } => println!("{dst} = {instruction} {comparison:?} {op_type:?} {op1} {op2}"),
             _ => println!("Print not implemented for {:?}", instruction),
+        }
+    }
+    if let Some(terminator) = bb.terminator {
+        match terminator {
+            Terminator::Br { dst } => println!("{terminator} bb {dst}"),
+            Terminator::Brcond {
+                condition,
+                if_true_dst,
+                if_false_dst,
+            } => println!("{terminator} i1 {condition}, bb {if_true_dst}, bb {if_false_dst}"),
         }
     }
 }
@@ -287,12 +377,12 @@ fn specifier_to_ir_type(type_specifier: &TypeSpecifier) -> IRType {
     }
 }
 
-fn next_uuid<'a>(ir_state: &mut IRState<'a>) -> u32 {
+fn next_uuid<'s, 'a>(ir_state: &mut IRState) -> u32 {
     ir_state.uuid_count += 1;
     return ir_state.uuid_count;
 }
 
-fn new_temp_reg<'s, 'a: 's>(ir_state: &'s mut IRState<'a>, ir_type: IRType) -> Register<'a> {
+fn new_temp_reg<'s, 'a: 's>(ir_state: &'s mut IRState, ir_type: IRType) -> Register<'a> {
     Register {
         disp_name: None,
         uuid: next_uuid(ir_state),
@@ -307,12 +397,12 @@ enum CastOp {
     ZeroExtend,
 }
 
-fn cast_operation<'s, 'a>(
+fn cast_operation<'s, 'i, 'a>(
     from_info: VariableInfo<'a>,
     to_type: Type<'a>,
     cast_op: CastOp,
-    ir_state: &'s mut IRState<'a>,
-    bb: &'s mut BasicBlock<'a>,
+    ir_state: &'i mut IRState<'s, 'a>,
+    cur_bb: BlockID,
 ) -> Result<VariableInfo<'a>, CompilationError<'a>> {
     // let (src_type_spec, dst_type_spec, src_reg) = match direction {
     //     PromotionDirection::LeftToRight => (l_type_spec, r_type_spec, left_reg),
@@ -345,7 +435,7 @@ fn cast_operation<'s, 'a>(
             dst_type: to_ir_type,
         },
     };
-    bb.instructions.push(cast_instr);
+    ir_state.blocks[cur_bb].instructions.push(cast_instr);
 
     // match direction {
     //     PromotionDirection::LeftToRight => left_reg = dst,
@@ -373,28 +463,28 @@ const INT_TYPE: Type = Type {
     specifiers: &INT_SPECIFIERS,
 };
 
-fn integral_promotion<'s, 'a>(
+fn integral_promotion<'i, 's, 'a>(
     var_info: &VariableInfo<'a>,
-    ir_state: &'s mut IRState<'a>,
-    bb: &'s mut BasicBlock<'a>,
+    ir_state: &'i mut IRState<'s, 'a>,
+    cur_bb: BlockID,
 ) -> Result<VariableInfo<'a>, CompilationError<'a>> {
     match var_info.c_type.specifiers.type_specifier {
         TypeSpecifier::SignedChar
         | TypeSpecifier::UnsignedChar
         | TypeSpecifier::Short
         | TypeSpecifier::UnsignedShort => {
-            cast_operation(*var_info, INT_TYPE, CastOp::SignExtend, ir_state, bb)
+            cast_operation(*var_info, INT_TYPE, CastOp::SignExtend, ir_state, cur_bb)
         }
         _ => Ok(*var_info),
     }
 }
 
-fn cast<'s, 'a>(
-    left_info: &mut VariableInfo<'a>,
-    right_info: &mut VariableInfo<'a>,
+fn cast<'s, 'i, 'r, 'a>(
+    left_info: &'r mut VariableInfo<'a>,
+    right_info: &'r mut VariableInfo<'a>,
     operator: TokenType,
-    ir_state: &'s mut IRState<'a>,
-    bb: &'s mut BasicBlock<'a>,
+    ir_state: &'i mut IRState<'s, 'a>,
+    cur_bb: BlockID,
 ) -> Result<(), CompilationError<'a>> {
     if left_info.c_type.derived_types.is_empty() && right_info.c_type.derived_types.is_empty() {
         // Both left and right are arithmetic, perform type promotion
@@ -446,12 +536,12 @@ fn cast<'s, 'a>(
         //        operand with signed integer type.
 
         // Integral promotions
-        *right_info = integral_promotion(&right_info, ir_state, bb)?;
+        *right_info = integral_promotion(&right_info, ir_state, cur_bb)?;
 
         if let TokenType::Assign = operator {
             ()
         } else {
-            *left_info = integral_promotion(&left_info, ir_state, bb)?;
+            *left_info = integral_promotion(&left_info, ir_state, cur_bb)?;
         }
 
         if l_type_spec == r_type_spec {
@@ -507,7 +597,7 @@ fn cast<'s, 'a>(
                     left_info.c_type,
                     CastOp::ZeroExtend,
                     ir_state,
-                    bb,
+                    cur_bb,
                 )?
             }
 
@@ -522,7 +612,7 @@ fn cast<'s, 'a>(
                     right_info.c_type,
                     CastOp::ZeroExtend,
                     ir_state,
-                    bb,
+                    cur_bb,
                 )?
             }
 
@@ -532,8 +622,13 @@ fn cast<'s, 'a>(
                 TypeSpecifier::UnsignedLongLong,
             )
             | (true, TypeSpecifier::UnsignedInt, TypeSpecifier::UnsignedLong) => {
-                *right_info =
-                    cast_operation(*right_info, left_info.c_type, CastOp::Trunc, ir_state, bb)?
+                *right_info = cast_operation(
+                    *right_info,
+                    left_info.c_type,
+                    CastOp::Trunc,
+                    ir_state,
+                    cur_bb,
+                )?
             }
 
             // SIGNED INTEGER PROMOTIONS
@@ -544,7 +639,7 @@ fn cast<'s, 'a>(
                     left_info.c_type,
                     CastOp::SignExtend,
                     ir_state,
-                    bb,
+                    cur_bb,
                 )?
             }
 
@@ -555,14 +650,19 @@ fn cast<'s, 'a>(
                     right_info.c_type,
                     CastOp::SignExtend,
                     ir_state,
-                    bb,
+                    cur_bb,
                 )?
             }
 
             (true, TypeSpecifier::Long | TypeSpecifier::Int, TypeSpecifier::LongLong)
             | (true, TypeSpecifier::Int, TypeSpecifier::Long) => {
-                *right_info =
-                    cast_operation(*right_info, left_info.c_type, CastOp::Trunc, ir_state, bb)?
+                *right_info = cast_operation(
+                    *right_info,
+                    left_info.c_type,
+                    CastOp::Trunc,
+                    ir_state,
+                    cur_bb,
+                )?
             }
 
             // CONVERSIONS FROM SIGNED TO UNSIGNED
@@ -593,8 +693,13 @@ fn cast<'s, 'a>(
             (true, TypeSpecifier::Int, TypeSpecifier::UnsignedInt)
             | (true, TypeSpecifier::Long, TypeSpecifier::UnsignedLong)
             | (true, TypeSpecifier::LongLong, TypeSpecifier::UnsignedLongLong) => {
-                *right_info =
-                    cast_operation(*right_info, left_info.c_type, CastOp::Trunc, ir_state, bb)?
+                *right_info = cast_operation(
+                    *right_info,
+                    left_info.c_type,
+                    CastOp::Trunc,
+                    ir_state,
+                    cur_bb,
+                )?
             }
 
             // When greater rank, zero extend the signed operand
@@ -609,7 +714,7 @@ fn cast<'s, 'a>(
                     left_info.c_type,
                     CastOp::ZeroExtend,
                     ir_state,
-                    bb,
+                    cur_bb,
                 )?
             }
 
@@ -624,7 +729,7 @@ fn cast<'s, 'a>(
                     right_info.c_type,
                     CastOp::ZeroExtend,
                     ir_state,
-                    bb,
+                    cur_bb,
                 )?
             }
 
@@ -634,8 +739,13 @@ fn cast<'s, 'a>(
                 TypeSpecifier::UnsignedLong | TypeSpecifier::UnsignedLongLong,
             )
             | (true, TypeSpecifier::Long, TypeSpecifier::UnsignedLongLong) => {
-                *right_info =
-                    cast_operation(*right_info, left_info.c_type, CastOp::Trunc, ir_state, bb)?
+                *right_info = cast_operation(
+                    *right_info,
+                    left_info.c_type,
+                    CastOp::Trunc,
+                    ir_state,
+                    cur_bb,
+                )?
             }
 
             // UNSIGNED TO SIGNED CONVERSION
@@ -649,7 +759,7 @@ fn cast<'s, 'a>(
                     left_info.c_type,
                     CastOp::ZeroExtend,
                     ir_state,
-                    bb,
+                    cur_bb,
                 )?
             }
             (false, TypeSpecifier::UnsignedInt, TypeSpecifier::Long | TypeSpecifier::LongLong)
@@ -659,13 +769,18 @@ fn cast<'s, 'a>(
                     left_info.c_type,
                     CastOp::ZeroExtend,
                     ir_state,
-                    bb,
+                    cur_bb,
                 )?
             }
             (true, TypeSpecifier::UnsignedInt, TypeSpecifier::Long | TypeSpecifier::LongLong)
             | (true, TypeSpecifier::UnsignedLong, TypeSpecifier::LongLong) => {
-                *right_info =
-                    cast_operation(*right_info, left_info.c_type, CastOp::Trunc, ir_state, bb)?
+                *right_info = cast_operation(
+                    *right_info,
+                    left_info.c_type,
+                    CastOp::Trunc,
+                    ir_state,
+                    cur_bb,
+                )?
             }
 
             (_, TypeSpecifier::Int, TypeSpecifier::Int)
@@ -724,18 +839,17 @@ fn specifier_to_type<'s, 'a>(
 }
 
 // Generate an expression in 3AC form. The destination of the most recent instruction contains the result.
-fn ir_gen_expression<'s, 'a>(
+fn ir_gen_expression<'i, 's, 'a>(
     expr: &'a Node<'a>,
-    scopes: &Scopes<'s, 'a>,
-    bb: &'s mut BasicBlock<'a>,
-    ir_state: &'s mut IRState<'a>,
-    arena: &'a Arena,
+    cur_bb: BlockID,
+    ir_state: &'i mut IRState<'s, 'a>,
 ) -> Result<VariableInfo<'a>, CompilationError<'a>> {
     // Used for allocating simpy types
 
+    // let cur_bb_data =
     match *expr {
         Node::Identifier { name } => {
-            let var_info = match get_var_info(scopes, name) {
+            let var_info = match get_var_info(ir_state.scopes, name) {
                 Some(t) => t,
                 None => return Err(CompilationError::NoDefinitionFound),
             };
@@ -753,7 +867,7 @@ fn ir_gen_expression<'s, 'a>(
                 src_type: IRType::Ptr,
                 src: var_info.reg,
             };
-            bb.instructions.push(load_var_inst);
+            ir_state.blocks[cur_bb].instructions.push(load_var_inst);
 
             let res_info = VariableInfo {
                 c_type: var_info.c_type,
@@ -766,6 +880,7 @@ fn ir_gen_expression<'s, 'a>(
 
         // TODO: These specifier_to_type calls could all just be references to const literal types rather than allocation on the arena
         Node::Literal(literal) => {
+            let arena = ir_state.arena;
             let (c_type, ir_type, constant) = match literal.token_type {
                 TokenType::IntLiteral(val) => (
                     specifier_to_type(TypeSpecifier::Int, arena)?,
@@ -809,7 +924,7 @@ fn ir_gen_expression<'s, 'a>(
 
             let src = Operand::Constant(constant);
             let instruction = Instruction::Assign { dst, src };
-            bb.instructions.push(instruction);
+            ir_state.blocks[cur_bb].instructions.push(instruction);
 
             let res_info = VariableInfo {
                 c_type,
@@ -844,8 +959,8 @@ fn ir_gen_expression<'s, 'a>(
             right,
         } => {
             println!("INFIX WITH {:?}", operator.token_type);
-            let mut left_info = ir_gen_expression(left, scopes, bb, ir_state, arena)?;
-            let mut right_info = ir_gen_expression(right, scopes, bb, ir_state, arena)?;
+            let mut left_info = ir_gen_expression(left, cur_bb, ir_state)?;
+            let mut right_info = ir_gen_expression(right, cur_bb, ir_state)?;
 
             // TODO: Typecheck in cast?
             cast(
@@ -853,7 +968,7 @@ fn ir_gen_expression<'s, 'a>(
                 &mut right_info,
                 operator.token_type,
                 ir_state,
-                bb,
+                cur_bb,
             )?;
 
             // left and right now have the same type after casting
@@ -889,7 +1004,7 @@ fn ir_gen_expression<'s, 'a>(
                     let dst = new_temp_reg(ir_state, ir_type);
 
                     // Signed integer overflow is not allowed in C90.
-                    bb.instructions.push(Instruction::Add {
+                    ir_state.blocks[cur_bb].instructions.push(Instruction::Add {
                         dst,
                         ir_type,
                         flags,
@@ -904,7 +1019,7 @@ fn ir_gen_expression<'s, 'a>(
                 }
                 TokenType::Asterisk => {
                     let dst = new_temp_reg(ir_state, ir_type);
-                    bb.instructions.push(Instruction::Mul {
+                    ir_state.blocks[cur_bb].instructions.push(Instruction::Mul {
                         dst,
                         ir_type,
                         flags,
@@ -922,12 +1037,14 @@ fn ir_gen_expression<'s, 'a>(
                     // the heap. A later optimisation pass will turn these into
                     // register SSAs.
                     if left_info.is_lvalue {
-                        bb.instructions.push(Instruction::Store {
-                            src_type: right_info.reg.ir_type,
-                            src: right,
-                            dst_type: left_info.reg.ir_type,
-                            dst: left_info.reg,
-                        });
+                        ir_state.blocks[cur_bb]
+                            .instructions
+                            .push(Instruction::Store {
+                                src_type: right_info.reg.ir_type,
+                                src: right,
+                                dst_type: left_info.reg.ir_type,
+                                dst: left_info.reg,
+                            });
                         // While we require the assigment destination to be an lvalue,
                         // the result of evaluating an expression is the value of the lvalue,
                         // but this expression may not be reassigned.
@@ -950,15 +1067,12 @@ fn ir_gen_expression<'s, 'a>(
     }
 }
 
-pub fn ir_gen_compound_smt<'s, 'ast: 's>(
+pub fn ir_gen_compound_smt<'s, 'ast: 's, 'i>(
     compound_stmt: &'ast Node<'ast>,
-    type_scopes: &'s mut Scopes<'ast, 'ast>,
-    ir_state: &'s mut IRState<'ast>,
-    arena: &'ast Arena,
-) -> Result<(), CompilationError<'ast>> {
-    push_new_scope(type_scopes);
-    let instructions = Vec::<Instruction>::new();
-    let mut bb = BasicBlock { instructions };
+    mut cur_bb: BlockID,
+    ir_state: &'i mut IRState<'s, 'ast>,
+) -> Result<BlockID, CompilationError<'ast>> {
+    push_new_scope(ir_state.scopes);
 
     if let Node::CompoundStatement {
         declaration_list,
@@ -974,13 +1088,8 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                     } => {
                         for init_decl in *init_list {
                             // Generate IR for the initializer expression, save it to a temp register.
-                            let mut expr_dest_info = ir_gen_expression(
-                                init_decl.initializer,
-                                type_scopes,
-                                &mut bb,
-                                ir_state,
-                                arena,
-                            )?;
+                            let mut expr_dest_info =
+                                ir_gen_expression(init_decl.initializer, cur_bb, ir_state)?;
 
                             let declarator_name = init_decl.declarator.name.unwrap();
 
@@ -1001,7 +1110,7 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                                 dst_type: expr_dest_info.reg.ir_type,
                                 dst: decl_dest,
                             };
-                            bb.instructions.push(alloc_instr);
+                            ir_state.blocks[cur_bb].instructions.push(alloc_instr);
 
                             let mut decl_info = VariableInfo {
                                 reg: decl_dest,
@@ -1017,7 +1126,7 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                                 &mut expr_dest_info,
                                 TokenType::Assign,
                                 ir_state,
-                                &mut bb,
+                                cur_bb,
                             )?;
 
                             // Store the temp register in the stack space for the actual register.
@@ -1027,10 +1136,10 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                                 dst_type: decl_dest.ir_type,
                                 dst: decl_dest,
                             };
-                            bb.instructions.push(store_instr);
+                            ir_state.blocks[cur_bb].instructions.push(store_instr);
 
                             push_var_type(
-                                type_scopes,
+                                ir_state.scopes,
                                 init_decl.declarator.name.unwrap(),
                                 decl_info,
                             )?;
@@ -1044,9 +1153,86 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
             for statement in *list {
                 match statement {
                     // Select statements
-                    Node::IfStatementList(..) => return Err(CompilationError::NotImplemented),
+                    Node::IfStatementList(list) => {
+                        let bb_after_statements = get_next_block(ir_state.blocks);
+                        let mut if_iter = (*list).iter().peekable();
+                        while let Some(if_statement) = if_iter.next() {
+                            // Basic block that (may) come after the if statement
+                            if let Node::Empty = if_statement.condition {
+                                // TODO: This is incorrect
+                                ir_gen_compound_smt(if_statement.statement, cur_bb, ir_state)?;
+                            } else {
+                                let cond_info =
+                                    ir_gen_expression(if_statement.condition, cur_bb, ir_state)?;
+                                let cond_reg = cond_info.reg;
+
+                                let cmp_dest = new_temp_reg(ir_state, IRType::I1);
+                                let cmp_instr = Instruction::Icmp {
+                                    dst: cmp_dest,
+                                    comparison: ComparisonKind::Eq,
+                                    op_type: cond_reg.ir_type,
+                                    op1: Operand::Register(cond_reg),
+                                    op2: Operand::Constant(int_to_constant(0, cond_reg.ir_type)),
+                                };
+
+                                let blocks = &mut ir_state.blocks;
+                                blocks[cur_bb].instructions.push(cmp_instr);
+
+                                let mut statement_bb = get_next_block(blocks);
+
+                                let fallthrough_bb = if if_iter.peek().is_none() {
+                                    bb_after_statements
+                                } else {
+                                    get_next_block(blocks)
+                                };
+
+                                let br_cond_term = Terminator::Brcond {
+                                    condition: Operand::Register(cmp_dest),
+                                    if_true_dst: statement_bb,
+                                    if_false_dst: fallthrough_bb,
+                                };
+                                blocks[cur_bb].terminator = Some(br_cond_term);
+                                cur_bb = fallthrough_bb;
+
+                                statement_bb = ir_gen_compound_smt(
+                                    if_statement.statement,
+                                    statement_bb,
+                                    ir_state,
+                                )?;
+
+                                let statement_br = Terminator::Br {
+                                    dst: bb_after_statements,
+                                };
+
+                                ir_state.blocks[statement_bb].terminator = Some(statement_br);
+
+                                // cur_bb.successors.push(statement_first_bb);
+
+                                // if first_bb.is_none() {
+                                //     first_bb = Some(ir_state.blocks.len());
+                                //     // ir_state.blocks.push(cur_bb);
+                                //     // cur_bb = &mut new_bb();
+                                // }
+
+                                // let cur_bb_id = ir_state.blocks.len() - 1;
+
+                                // let statement_successors =
+                                //     &mut ir_state.blocks[statement_last_bb].successors;
+                                // if statement_successors.is_empty() {
+                                //     statement_successors.push(cur_bb_id);
+                                // }
+
+                                // let statement_bb = ir_state.blocks.last();
+                            }
+
+                            //bb.successors
+
+                            // bb.instructions
+                        }
+                        cur_bb = bb_after_statements;
+                    }
                     Node::CompoundStatement { .. } => {
-                        ir_gen_compound_smt(statement, type_scopes, ir_state, arena)?
+                        ir_gen_compound_smt(statement, cur_bb, ir_state)?;
                     }
                     // Iteration statements
                     Node::WhileStatement { .. } => return Err(CompilationError::NotImplemented),
@@ -1058,32 +1244,38 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's>(
                     Node::Return { .. } => return Err(CompilationError::NotImplemented),
 
                     _ => {
-                        ir_gen_expression(statement, type_scopes, &mut bb, ir_state, arena)?;
+                        ir_gen_expression(statement, cur_bb, ir_state)?;
                     }
                 }
             }
         }
     }
 
-    print_basic_block(&bb);
-    ir_state.blocks.push(bb);
+    pop_scope(ir_state.scopes);
 
-    pop_scope(type_scopes);
-    return Ok(());
+    // let last_bb = ir_state.blocks.len();
+    // TODO: Better handlling of pushing new BB's/checking they have 1 instruction or more
+
+    // ir_state.blocks.push(arena.push(cur_bb)?);
+    return Ok(cur_bb);
 }
 
 pub fn ir_gen_translation_unit<'s, 'ast: 's>(
     translation_unit: &'ast Node<'ast>,
     arena: &'ast Arena,
 ) -> Result<(), CompilationError<'ast>> {
-    let scopes = &mut Scopes::new();
-    // Global Scope
-    push_new_scope(scopes);
+    let cur_bb_data = new_bb();
+    let mut cur_bb = 0;
+    // let mut blocks = vec![cur_bb_data];
 
     let mut ir_state = IRState {
         uuid_count: 0,
-        blocks: Vec::new(),
+        blocks: &mut vec![cur_bb_data],
+        scopes: &mut Scopes::new(),
+        arena,
     };
+    // Global Scope
+    push_new_scope(ir_state.scopes);
 
     if let Node::TranslationalUnit {
         external_declarations,
@@ -1101,7 +1293,7 @@ pub fn ir_gen_translation_unit<'s, 'ast: 's>(
                         derived_types: declarator.derived_types,
                     };
                     // push_var_type(scopes, declarator.name.unwrap(), TypeInfo { c_type :func_type, )?;
-                    ir_gen_compound_smt(compound_statement, scopes, &mut ir_state, arena)?;
+                    cur_bb = ir_gen_compound_smt(compound_statement, cur_bb, &mut ir_state)?;
                 }
 
                 /*
@@ -1121,317 +1313,12 @@ pub fn ir_gen_translation_unit<'s, 'ast: 's>(
         }
 
         // println!("{:?}", ir_state);
-
+        for (i, bb) in ir_state.blocks.iter().enumerate() {
+            println!("\n\nBB {i}: ");
+            print_basic_block(&bb);
+        }
         Ok(())
     } else {
         return Err(CompilationError::InvalidASTStructure);
     }
 }
-/*
-pub fn ast_to_3ac(){
-
-    // TODO: This "pyramid of doom" could probably be circumvented by using more specialised structs in the parser
-    if let Node::CompoundStatement { declaration_list, statement_list } = *compound_stmt {
-
-        if let Node::DeclarationList(list) = declaration_list {
-            for declaration in *list {
-                if let Node::Declaration { declaration_specifiers, init_declarator_list } = *declaration {
-                    // TODO: Here we are assuming all type declarations are of type integer.
-
-                    if let Node::InitDeclaratorList(init_declarator) = *init_declarator_list {
-                        //let reg = add_var_reg(scope_stack, init_declarator.declarator.name);
-                        //codegen_expr(scope_stack, reg, &mut block.instructions, init_declarator.initializer)?;
-                    } else {
-                        return Err(CompilationError::NotImplemented);
-                    }
-                }
-            }
-
-
-        } else {
-            return Err(CompilationError::InvalidASTStructure);
-        }
-
-
-        if let Node::StatementList(list) = statement_list {
-            for statement in *list {
-                match statement {
-                    Node::Infix { operator, left, right } => {
-                        match operator.token_type {
-                            TokenType::Assign => {
-                                match left {
-                                    Node::Identifier { name } => {
-                                        let reg = step_var_reg(scope_stack, name);
-                                        codegen_expr(scope_stack, reg, &mut block.instructions, right)?;
-                                    }
-
-                                    Node::Prefix(_) | Node::Postfix(_) => return Err(CompilationError::UnimplVerbose("Pre- and postfix".to_string())),
-                                    _ => return Err(CompilationError::InvalidASTStructure),
-                                }
-                            }
-
-                            TokenType::PlusAssign | TokenType::MinusAssign | TokenType::MultAssign | TokenType::DivAssign |
-                            TokenType::ModAssign |  TokenType::ANDAssign | TokenType::ORAssign | TokenType::XORAssign => {
-                                return Err(CompilationError::UnimplVerbose("Codegen for extra Assignments".to_string()));
-                            }
-
-                            _ => return Err(CompilationError::InvalidASTStructure),
-
-                        }
-                    }
-
-                    _ => return Err(CompilationError::InvalidASTStructure),
-                }
-            }
-        }
-
-        return Ok(block);
-
-    } else {
-        return Err(CompilationError::InvalidASTStructure);
-    }
-}
-*/
-
-/*
-use crate::compile::CompilationError;
-use crate::lexer::*;
-use crate::parser::*;
-
-#[derive(Debug)]
-enum Reg<'r> {
-    Zero,
-    // registers associated with a variable in some way
-    // functionally, these are the same as a temp register
-    Var(VarReg<'r>),
-}
-
-#[derive(Debug, Clone, Copy)]
-struct VarReg<'r>{
-    name : &'r str,
-    version : u32,
-}
-
-impl<'r> VarReg<'r> {
-    fn new(name : &'r str, version : u32) -> Self{
-        VarReg{
-            name,
-            version
-        }
-    }
-}
-
-type RegScope<'s> = HashMap<&'s str, u32>;
-
-struct RegScopeStack<'s>{
-    stack : Vec<RegScope<'s>>,
-    temp_count : u32,
-}
-
-impl<'s> RegScopeStack<'s> {
-    fn new() -> Self{
-        RegScopeStack {
-            stack : Vec::<RegScope>::new(),
-            temp_count : 0,
-        }
-    }
-}
-
-fn push_reg_scope(scope_stack : &mut RegScopeStack){
-    scope_stack.stack.push(RegScope::new());
-}
-
-fn get_temp_reg<'s, 'n : 's>(scope_stack : &'s mut RegScopeStack<'n>) -> VarReg<'n>{
-    println!("Adding tmp register with id {}", scope_stack.temp_count);
-    let temp_reg = VarReg::new("tmp", scope_stack.temp_count);
-    (*scope_stack).temp_count += 1;
-    return temp_reg;
-}
-
-fn add_var_reg<'s, 'n : 's>(scope_stack : &'s mut RegScopeStack<'n>, name : &'n str) -> VarReg<'n>{
-    let var_reg = VarReg::new(name, 0);
-    let cur_scope = scope_stack.stack.last_mut().unwrap();
-    println!("adding new var register with name {name}");
-    cur_scope.insert(name, var_reg.version);
-
-    return var_reg;
-}
-
-fn step_var_reg<'s, 'n : 's>(scope_stack : &'s mut RegScopeStack<'n>, name : &'n str) -> VarReg<'n>{
-    let cur_scope = scope_stack.stack.last_mut().unwrap();
-    let cur_version = cur_scope.get_mut(name).unwrap();
-    *cur_version += 1;
-
-    return VarReg::new(name, *cur_version);
-}
-
-#[derive(Debug)]
-enum Instruction<'i> {
-    Add     { dst : VarReg<'i>, r1 : Reg<'i>, r2 : Reg<'i>},
-    AddImm  { dst : VarReg<'i>, r1 : Reg<'i>, imm : i32},
-}
-
-#[derive(Debug)]
-struct BasicBlock<'b>{
-    instructions : Vec<Instruction<'b>>,
-}
-
-impl<'b> BasicBlock<'b> {
-    fn new() -> Self {
-        BasicBlock {
-            instructions : Vec::<Instruction>::new(),
-        }
-    }
-}
-
-fn codegen_expr<'s, 'n : 's, 'i : 's>(scope_stack : &'s mut RegScopeStack<'n>, dest_reg : VarReg<'n>, instructions : &'i mut Vec<Instruction<'n>>, expr : &'n Node<'n>) -> Result<(), CompilationError<'n>>{
-    match expr {
-        Node::Literal(lit) => {
-            if let TokenType::IntLiteral(val) = lit.token_type {
-                let instr = Instruction::AddImm{ dst : dest_reg, r1 : Reg::Zero, imm : val as i32};
-                instructions.push(instr);
-                return Ok(())
-            } else {
-                return Err(CompilationError::NotImplemented);
-            }
-        }
-
-        Node::Infix { operator, left, right } => {
-            let left_dest = get_temp_reg(scope_stack);
-            codegen_expr(scope_stack, left_dest, instructions, left)?;
-
-            let right_dest = get_temp_reg(scope_stack);
-            codegen_expr(scope_stack, right_dest, instructions, right)?;
-
-            match operator.token_type {
-                TokenType::Plus => {
-                    let instr = Instruction::Add { dst: dest_reg, r1: Reg::Var(left_dest), r2: Reg::Var(right_dest) };
-                    instructions.push(instr);
-                }
-
-                TokenType::Minus | TokenType::Asterisk | TokenType::Div | TokenType::Mod | TokenType::OR | TokenType::Ampersand | TokenType::XOR |
-                TokenType::ORLogical | TokenType::ANDLogical | TokenType::LeftShift | TokenType::RightShift
-                    => return Err(CompilationError::UnimplVerbose(format!("Codegen for infix {:?}", operator))),
-
-                _ => return Err(CompilationError::InvalidASTStructure),
-            }
-
-            return Ok(());
-        }
-
-        _ => return Err(CompilationError::InvalidASTStructure),
-    }
-}
-
-fn codegen_compound_stmt<'s, 'n : 's>(scope_stack : &'s mut RegScopeStack<'n>, compound_stmt : &'n Node<'n>) -> Result<BasicBlock<'n>, CompilationError<'n>> {
-    push_reg_scope(scope_stack);
-
-    let mut block = BasicBlock::new();
-
-    // TODO: This "pyramid of doom" could probably be circumvented by using more specialised structs in the parser
-    if let Node::CompoundStatement { declaration_list, statement_list } = *compound_stmt {
-
-        if let Node::DeclarationList(list) = declaration_list {
-            for declaration in *list {
-                if let Node::Declaration { declaration_specifiers, init_declarator_list } = *declaration {
-                    // TODO: Here we are assuming all type declarations are of type integer.
-
-                    if let Node::InitDeclaratorList(init_declarator) = *init_declarator_list {
-                        //let reg = add_var_reg(scope_stack, init_declarator.declarator.name);
-                        //codegen_expr(scope_stack, reg, &mut block.instructions, init_declarator.initializer)?;
-                    } else {
-                        return Err(CompilationError::NotImplemented);
-                    }
-                }
-            }
-
-
-        } else {
-            return Err(CompilationError::InvalidASTStructure);
-        }
-
-
-        if let Node::StatementList(list) = statement_list {
-            for statement in *list {
-                match statement {
-                    Node::Infix { operator, left, right } => {
-                        match operator.token_type {
-                            TokenType::Assign => {
-                                match left {
-                                    Node::Identifier { name } => {
-                                        let reg = step_var_reg(scope_stack, name);
-                                        codegen_expr(scope_stack, reg, &mut block.instructions, right)?;
-                                    }
-
-                                    Node::Prefix(_) | Node::Postfix(_) => return Err(CompilationError::UnimplVerbose("Pre- and postfix".to_string())),
-                                    _ => return Err(CompilationError::InvalidASTStructure),
-                                }
-                            }
-
-                            TokenType::PlusAssign | TokenType::MinusAssign | TokenType::MultAssign | TokenType::DivAssign |
-                            TokenType::ModAssign |  TokenType::ANDAssign | TokenType::ORAssign | TokenType::XORAssign => {
-                                return Err(CompilationError::UnimplVerbose("Codegen for extra Assignments".to_string()));
-                            }
-
-                            _ => return Err(CompilationError::InvalidASTStructure),
-
-                        }
-                    }
-
-                    _ => return Err(CompilationError::InvalidASTStructure),
-                }
-            }
-        }
-
-        return Ok(block);
-
-    } else {
-        return Err(CompilationError::InvalidASTStructure);
-    }
-}
-
-/*
-fn codegen_function<'n>(function_definition : &'n Node<'n>) -> Result<(), CompilationError<'n>>{
-
-
-    Ok(())
-}*/
-
-
-pub fn codegen_start<'n>(translation_unit : &'n Node) -> Result<(), CompilationError<'n>>{
-
-    let scope_stack = &mut RegScopeStack::new();
-    // Global Scope
-    push_reg_scope(scope_stack);
-
-    if let Node::TranslationalUnit { external_declarations } = *translation_unit {
-        for external_declaration in external_declarations {
-            match *external_declaration {
-
-                Node::FunctionDefinition{ declaration_specifiers, declarator, compound_statement} => {
-                    let basic_block = codegen_compound_stmt(scope_stack, &compound_statement)?;
-                    println!("{:?}", basic_block);
-                    return Ok(());
-                }
-
-                /*
-                Node::Declaration { declaration_specifiers, init_declarator_list } => {
-
-                    // Just a a single declarator
-                    if let Node::InitDeclarator { declarator, initializer } = init_declarator_list {
-                        let declaration_type = Type{ specifiers : declaration_specifiers.specifiers, derived_types : declarator.derived_types};
-                    } else {
-                        // TODO: Implement initializer lists
-                        return Err(CompilationError::NotImplemented);
-                    }
-                }*/
-                _ => return Err(CompilationError::InvalidASTStructure),
-            }
-        }
-
-        Ok(())
-    } else {
-        return Err(CompilationError::InvalidASTStructure);
-    }
-
-}*/
