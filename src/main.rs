@@ -10,6 +10,7 @@ mod compile;
 mod ir;
 mod lexer;
 mod parser;
+mod passes;
 mod pretty_print;
 mod typechecker;
 

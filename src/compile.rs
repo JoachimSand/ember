@@ -2,6 +2,7 @@ use crate::arena::*;
 use crate::colours::*;
 use crate::lexer::*;
 use crate::parser::*;
+use crate::passes::mem_to_reg;
 use crate::pretty_print::*;
 use std::{error::Error, fmt};
 //use crate::typechecker::*;
@@ -134,6 +135,7 @@ fn compile<'a>(arena: &'a Arena, lexer: &mut Lexer<'a>) -> Result<(), Compilatio
     print_ast(translation_unit, "".to_string(), true);
     //type_check_start(translation_unit)?;
     //codegen_start(translation_unit)?;
-    ir_gen_translation_unit(translation_unit, arena)?;
+    let blocks = ir_gen_translation_unit(translation_unit, arena)?;
+    mem_to_reg(blocks);
     Ok(())
 }

@@ -6,7 +6,6 @@ use crate::parser::*;
 use crate::typechecker::*;
 use core::fmt;
 use core::panic;
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::println;
 
@@ -123,7 +122,7 @@ pub enum ComparisonKind {
     Eq,
 }
 
-type BlockID = usize;
+pub type BlockID = usize;
 
 fn get_next_block<'a>(blocks: &mut Vec<BasicBlockData<'a>>) -> BlockID {
     blocks.push(new_bb());
@@ -250,14 +249,14 @@ impl<'i> Display for Terminator<'i> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BasicBlockData<'b> {
-    instructions: Vec<Instruction<'b>>,
-
-    terminator: Option<Terminator<'b>>,
-    // successors: Vec<BlockID>,
+    // predecessors: Vec<BlockID>,
+    pub instructions: Vec<Instruction<'b>>,
+    pub terminator: Option<Terminator<'b>>,
 }
 
 fn new_bb<'b>() -> BasicBlockData<'b> {
     BasicBlockData {
+        // predecessors: Vec::<BlockID>::new(),
         instructions: Vec::<Instruction>::new(),
         // successors: Vec::<BlockID>::new(),
         terminator: None,
@@ -271,6 +270,9 @@ pub struct IRState<'s, 'a> {
     arena: &'a Arena,
     // blocks: Vec<&'s BasicBlock<'a>>,
 }
+
+pub const START_BB: BlockID = 0;
+pub const END_BB: BlockID = 0;
 
 fn print_basic_block(bb: &BasicBlockData) {
     for instruction in &bb.instructions {
@@ -823,6 +825,7 @@ fn cast<'s, 'i, 'r, 'a>(
     Ok(())
     // left and right now have the same type
 }
+
 fn specifier_to_type<'s, 'a>(
     type_specifier: TypeSpecifier<'a>,
     arena: &'a Arena,
@@ -882,11 +885,7 @@ fn ir_gen_expression<'i, 's, 'a>(
         Node::Literal(literal) => {
             let arena = ir_state.arena;
             let (c_type, ir_type, constant) = match literal.token_type {
-                TokenType::IntLiteral(val) => (
-                    specifier_to_type(TypeSpecifier::Int, arena)?,
-                    IRType::I32,
-                    Constant::I32(val),
-                ),
+                TokenType::IntLiteral(val) => (INT_TYPE, IRType::I32, Constant::I32(val)),
                 TokenType::LongLiteral(val) => (
                     specifier_to_type(TypeSpecifier::Long, arena)?,
                     IRType::I64,
@@ -1158,8 +1157,13 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's, 'i>(
                         while let Some(if_statement) = if_iter.next() {
                             // Basic block that (may) come after the if statement
                             if let Node::Empty = if_statement.condition {
-                                // TODO: This is incorrect
-                                ir_gen_compound_smt(if_statement.statement, cur_bb, ir_state)?;
+                                cur_bb =
+                                    ir_gen_compound_smt(if_statement.statement, cur_bb, ir_state)?;
+
+                                let br = Terminator::Br {
+                                    dst: bb_after_statements,
+                                };
+                                ir_state.blocks[cur_bb].terminator = Some(br);
                             } else {
                                 let cond_info =
                                     ir_gen_expression(if_statement.condition, cur_bb, ir_state)?;
@@ -1262,14 +1266,14 @@ pub fn ir_gen_compound_smt<'s, 'ast: 's, 'i>(
 pub fn ir_gen_translation_unit<'s, 'ast: 's>(
     translation_unit: &'ast Node<'ast>,
     arena: &'ast Arena,
-) -> Result<(), CompilationError<'ast>> {
+) -> Result<Vec<BasicBlockData<'ast>>, CompilationError<'ast>> {
     let cur_bb_data = new_bb();
     let mut cur_bb = 0;
     // let mut blocks = vec![cur_bb_data];
-
+    let mut blocks = vec![cur_bb_data];
     let mut ir_state = IRState {
         uuid_count: 0,
-        blocks: &mut vec![cur_bb_data],
+        blocks: &mut blocks,
         scopes: &mut Scopes::new(),
         arena,
     };
@@ -1316,7 +1320,7 @@ pub fn ir_gen_translation_unit<'s, 'ast: 's>(
             println!("\n\nBB {i}: ");
             print_basic_block(&bb);
         }
-        Ok(())
+        Ok(blocks)
     } else {
         return Err(CompilationError::InvalidASTStructure);
     }
