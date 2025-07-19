@@ -137,7 +137,7 @@ macro_rules! lex_operand {
     ) => {{  
         match $c.peek_char() {
             Some(c) => {
-                match *c {
+                match c {
                     $(
                         $s => {
                             $c.next_char();
@@ -192,13 +192,16 @@ impl <'input> Lexer <'input> {
             return Some(tok);
         }
 
+
         // get rid of white space and comments first
         loop {
-            let c = *self.peek_char()?;
+            let c = self.peek_char()?;
 
             if c.is_whitespace() {
                 self.next_char()?;
             } else if c == '/' {
+                let line_num = self.lines.len();
+                let start_col = self.char_pos - self.cur_line_start;
                 self.next_char();
                 match self.peek_char()? {
                     '/' => {
@@ -210,13 +213,24 @@ impl <'input> Lexer <'input> {
                         loop {
                             let c = self.next_char()?;
 
-                            if c == '*' && *self.peek_char()? == '/' {
+                            if c == '*' && self.peek_char()? == '/' {
                                 self.next_char();
                                 break;
                             }
                         }
                     }
-                    _ => break,
+                    // We did not encounter a comment, but we consumed a '/' character.
+                    // We must emit the appropriate token: either a simple div or a div-assign.
+                    '=' => {
+                        self.next_char();
+                        let pos = Pos { start_col, line_num, end_col : self.char_pos - self.cur_line_start};
+                        return Some(Token { pos, token_type : TokenType::DivAssign});
+                    }
+
+                    _ => {
+                        let pos = Pos { start_col, line_num, end_col : self.char_pos - self.cur_line_start};
+                        return Some(Token { pos, token_type : TokenType::Div});                        
+                    }
                 }
             } else {
                 break;
@@ -233,11 +247,7 @@ impl <'input> Lexer <'input> {
         let token = Token { pos, token_type};
         Some(token)
     }
-}
 
-
-
-impl <'input> Lexer<'input> {
     pub fn new(input : &'input str, arena : &'input Arena) -> Self {
         Lexer {
             input, char_stream : input.chars().peekable(), arena,
@@ -246,8 +256,12 @@ impl <'input> Lexer<'input> {
         }
     }
 
-    fn peek_char(&mut self) -> Option<&char> {
-        self.char_stream.peek()
+    fn peek_char(&mut self) -> Option<char> {
+        if let Some(c) = self.char_stream.peek() {
+            Some(*c)
+        } else {
+            None
+        }
     }
 
     pub fn next_char(&mut self) -> Option<char>{
@@ -276,8 +290,8 @@ impl <'input> Lexer<'input> {
 
                 while let Some(c) = self.peek_char() {
                     // Only consume iterator if next char can be added to current token
-                    if c.is_ascii_alphanumeric() || *c == '_' {
-                        identifier_string.push(*c);
+                    if c.is_ascii_alphanumeric() || c == '_' {
+                        identifier_string.push(c);
                         self.next_char();
                     } else {
                         break;
@@ -404,10 +418,10 @@ impl <'input> Lexer<'input> {
                 
 
                 while let Some(c) = self.peek_char() {
-                    match *c {
-                        '0'|'1'|'2'|'3'|'4'|'5'|'6'|'7'|'8'|'9'  => num_literal_str.push(*c),
+                    match c {
+                        '0'|'1'|'2'|'3'|'4'|'5'|'6'|'7'|'8'|'9'  => num_literal_str.push(c),
                         '.' => {
-                            num_literal_str.push(*c);
+                            num_literal_str.push(c);
                             l_type = LiteralType::Float;
                         }
                         'u' | 'U' => {
