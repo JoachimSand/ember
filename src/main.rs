@@ -12,6 +12,7 @@ mod lexer;
 mod parser;
 mod passes;
 mod pretty_print;
+mod test;
 mod typechecker;
 
 use compile::*;
@@ -47,12 +48,12 @@ impl fmt::Display for MainError {
 }
 
 fn main() -> Result<(), MainError> {
-    // let args: Vec<String> = env::args().collect();
-    let args: Vec<String> = vec![
-        "prog".to_string(),
-        "-c".to_string(),
-        "./tests/arrays.c".to_string(),
-    ];
+    let args: Vec<String> = env::args().collect();
+    // let args: Vec<String> = vec![
+    //     "prog".to_string(),
+    //     "-c".to_string(),
+    //     "./tests/arrays.c".to_string(),
+    // ];
 
     //println!("Recieved args: {:?}", args);
 

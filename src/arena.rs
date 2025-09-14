@@ -40,7 +40,10 @@ impl<'arena> Arena {
         }
     }
 
-    pub fn push_str(self: &'arena Arena, input: &str) -> Result<&'arena str, CompilationError> {
+    pub fn push_str(
+        self: &'arena Arena,
+        input: &str,
+    ) -> Result<&'arena str, CompilationError<'arena>> {
         let byte_vec = self.push_slice_copy(input.as_bytes())?;
         unsafe { return Ok(str::from_utf8_unchecked(byte_vec)) };
     }
@@ -48,7 +51,7 @@ impl<'arena> Arena {
     pub fn push_slice_copy<T: Copy>(
         self: &'arena Arena,
         slice: &[T],
-    ) -> Result<&'arena [T], CompilationError> {
+    ) -> Result<&'arena [T], CompilationError<'arena>> {
         let layout = Layout::for_value(slice);
         //println!("Allocating slice {:?}, space required: {}", slice, layout.size());
         let dst = self.alloc_layout(layout)? as *mut T;
@@ -59,7 +62,7 @@ impl<'arena> Arena {
         }
     }
 
-    pub fn push<T>(self: &'arena Arena, entry: T) -> Result<&'arena T, CompilationError> {
+    pub fn push<T>(self: &'arena Arena, entry: T) -> Result<&'arena T, CompilationError<'arena>> {
         let layout = Layout::for_value(&entry);
         let dst = self.alloc_layout(layout)?;
 
@@ -69,7 +72,11 @@ impl<'arena> Arena {
         }
     }
 
-    pub fn push_mut<T>(self: &'arena Arena, entry: T) -> Result<&'arena mut T, CompilationError> {
+    #[allow(dead_code)]
+    pub fn push_mut<T>(
+        self: &'arena Arena,
+        entry: T,
+    ) -> Result<&'arena mut T, CompilationError<'arena>> {
         let layout = Layout::for_value(&entry);
         let dst = self.alloc_layout(layout)?;
 
@@ -79,7 +86,10 @@ impl<'arena> Arena {
         }
     }
 
-    fn alloc_layout(self: &'arena Arena, layout: Layout) -> Result<usize, CompilationError> {
+    fn alloc_layout(
+        self: &'arena Arena,
+        layout: Layout,
+    ) -> Result<usize, CompilationError<'arena>> {
         //println!("Size required: {}", layout.size());
 
         // Mutating through an immutable reference is undefined behaviour

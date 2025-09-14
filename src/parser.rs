@@ -375,6 +375,7 @@ pub fn parse_primary<'arena>(
         | TokenType::ULongLiteral(_)
         | TokenType::FloatLiteral(_)
         | TokenType::DoubleLiteral(_)
+        | TokenType::CharLiteral(_)
         | TokenType::StringLiteral(_) => {
             let node = arena.push(Node::Literal(cur_token))?;
             return Ok(node);
@@ -1806,6 +1807,7 @@ pub fn parse_expr_statement<'arena>(
     lexer: &mut Lexer<'arena>,
     arena: &'arena Arena,
 ) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
+    coz::scope!("parse_expr_statement");
     match peek_token(lexer)?.token_type {
         TokenType::Semicolon => {
             next_token(lexer)?;
@@ -2032,6 +2034,7 @@ fn parse_compound_statement<'arena>(
     lexer: &mut Lexer<'arena>,
     arena: &'arena Arena,
 ) -> Result<&'arena Node<'arena>, CompilationError<'arena>> {
+    coz::scope!("compound_statement");
     let l_curl = expect_token(lexer, TokenType::LCurlyBracket)?;
 
     let mut parse_compound_contents = || -> Result<&Node, CompilationError> {

@@ -4,18 +4,17 @@ use std::str::Chars;
 use crate::arena::*;
 use crate::typechecker::TypeAlias;
 
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Token<'t> {
-    pub pos : Pos,
-    pub token_type : TokenType<'t>,
+    pub pos: Pos,
+    pub token_type: TokenType<'t>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pos {
-    pub start_col : usize,
-    pub end_col : usize,
-    pub line_num : usize,
+    pub start_col: usize,
+    pub end_col: usize,
+    pub line_num: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -41,7 +40,7 @@ pub enum TokenType<'t> {
     Mod,
     Increment,
     Decrement,
-    
+
     // Binary Operators
     OR,
     XOR,
@@ -74,8 +73,8 @@ pub enum TokenType<'t> {
     RightShiftAssign,
 
     // Keywords
-    Auto, 
-    Break, 
+    Auto,
+    Break,
     Case,
     Char,
     Const,
@@ -122,8 +121,6 @@ pub enum TokenType<'t> {
     RCurlyBracket,
     LBracket,
     RBracket,
-    End,
-    Unknown,
 }
 
 #[macro_export]
@@ -132,9 +129,9 @@ macro_rules! lex_operand {
         lexer = $c:expr,
         fallback => $f:expr,
         $(
-            $s:pat => $t:expr  
+            $s:pat => $t:expr
         ),*
-    ) => {{  
+    ) => {{
         match $c.peek_char() {
             Some(c) => {
                 match c {
@@ -142,7 +139,7 @@ macro_rules! lex_operand {
                         $s => {
                             $c.next_char();
                             $t;
-                        }    
+                        }
                     )*
                     _ => {
                         $f;
@@ -155,43 +152,40 @@ macro_rules! lex_operand {
 }
 
 pub struct Lexer<'input> {
-    input : &'input str,
-    char_stream : Peekable<Chars<'input>>,
-    arena : &'input Arena,
+    input: &'input str,
+    char_stream: Peekable<Chars<'input>>,
+    arena: &'input Arena,
 
     // references to lines in input
-    pub lines : Vec<&'input str>,
+    pub lines: Vec<&'input str>,
     // absolute position of last character lexed
-    char_pos : usize,           
-    // absolute pos of where the line currently being lexed starts 
-    cur_line_start : usize,   
+    char_pos: usize,
+    // absolute pos of where the line currently being lexed starts
+    cur_line_start: usize,
 
-    peek_token : Option<Token<'input>>,
+    peek_token: Option<Token<'input>>,
 
     // Types defined by typedef
-    pub type_aliases : Vec<&'input TypeAlias<'input>>,
+    pub type_aliases: Vec<&'input TypeAlias<'input>>,
 }
 
-
-impl <'input> Lexer <'input> {
-
+impl<'input> Lexer<'input> {
     pub fn peek_token(&mut self) -> Option<Token<'input>> {
         //TODO: Can be done cleaner with map
         if let Some(tok) = self.peek_token {
             return Some(tok);
         } else {
-            let peek_tok = self.next_token(); 
+            let peek_tok = self.next_token();
             self.peek_token = peek_tok;
             return peek_tok;
         }
     }
 
-    pub fn next_token(&mut self) -> Option<Token<'input>> { 
+    pub fn next_token(&mut self) -> Option<Token<'input>> {
         if let Some(tok) = self.peek_token {
             self.peek_token = None;
             return Some(tok);
         }
-
 
         // get rid of white space and comments first
         loop {
@@ -207,7 +201,7 @@ impl <'input> Lexer <'input> {
                     '/' => {
                         // Handle one-line comments!
                         while self.next_char()? != '\n' {}
-                    },
+                    }
                     '*' => {
                         // Handle multi-line comments!
                         loop {
@@ -223,36 +217,59 @@ impl <'input> Lexer <'input> {
                     // We must emit the appropriate token: either a simple div or a div-assign.
                     '=' => {
                         self.next_char();
-                        let pos = Pos { start_col, line_num, end_col : self.char_pos - self.cur_line_start};
-                        return Some(Token { pos, token_type : TokenType::DivAssign});
+                        let pos = Pos {
+                            start_col,
+                            line_num,
+                            end_col: self.char_pos - self.cur_line_start,
+                        };
+                        return Some(Token {
+                            pos,
+                            token_type: TokenType::DivAssign,
+                        });
                     }
 
                     _ => {
-                        let pos = Pos { start_col, line_num, end_col : self.char_pos - self.cur_line_start};
-                        return Some(Token { pos, token_type : TokenType::Div});                        
+                        let pos = Pos {
+                            start_col,
+                            line_num,
+                            end_col: self.char_pos - self.cur_line_start,
+                        };
+                        return Some(Token {
+                            pos,
+                            token_type: TokenType::Div,
+                        });
                     }
                 }
             } else {
                 break;
             }
         }
-        
+
         // track position before and after lexing token.
         // This can be used to track the size and pos of the token
         let line_num = self.lines.len();
         let start_col = self.char_pos - self.cur_line_start;
         let token_type = self.next_token_type()?;
-        let pos = Pos { start_col, line_num, end_col : self.char_pos - self.cur_line_start};
+        let pos = Pos {
+            start_col,
+            line_num,
+            end_col: self.char_pos - self.cur_line_start,
+        };
 
-        let token = Token { pos, token_type};
+        let token = Token { pos, token_type };
         Some(token)
     }
 
-    pub fn new(input : &'input str, arena : &'input Arena) -> Self {
+    pub fn new(input: &'input str, arena: &'input Arena) -> Self {
         Lexer {
-            input, char_stream : input.chars().peekable(), arena,
-            lines : Vec::new(), cur_line_start : 0, char_pos : 0, peek_token : None,
-            type_aliases : Vec::new()
+            input,
+            char_stream: input.chars().peekable(),
+            arena,
+            lines: Vec::new(),
+            cur_line_start: 0,
+            char_pos: 0,
+            peek_token: None,
+            type_aliases: Vec::new(),
         }
     }
 
@@ -264,7 +281,7 @@ impl <'input> Lexer <'input> {
         }
     }
 
-    pub fn next_char(&mut self) -> Option<char>{
+    pub fn next_char(&mut self) -> Option<char> {
         let c = self.char_stream.next()?;
         self.char_pos += 1;
 
@@ -277,12 +294,11 @@ impl <'input> Lexer <'input> {
         Some(c)
     }
 
-    fn next_token_type(&mut self) -> Option<TokenType<'input>> {    
-        let mut first_char = self.next_char()?;
+    fn next_token_type(&mut self) -> Option<TokenType<'input>> {
+        let first_char = self.next_char()?;
 
         match first_char {
             'a'..='z' | 'A'..='Z' | '_' => {
-                
                 let identifier_string = &mut String::new();
 
                 // Attempt to parse identifier
@@ -297,7 +313,7 @@ impl <'input> Lexer <'input> {
                         break;
                     }
                 }
-                
+
                 if identifier_string.chars().count() >= 10 {
                     // No keyword is 10 characters or longer
 
@@ -344,13 +360,12 @@ impl <'input> Lexer <'input> {
                         // If the string of characters is not keyword, the only other option is
                         // a previously defined type or else an identifier.
 
-
                         for alias in &self.type_aliases {
                             if alias.name == identifier_string {
                                 return Some(TokenType::TypeName(alias));
                             }
                         }
-                        
+
                         let identifier = self.arena.push_str(identifier_string.as_str()).unwrap();
                         return Some(TokenType::Identifier(identifier));
                     }
@@ -358,7 +373,6 @@ impl <'input> Lexer <'input> {
             }
 
             '"' => {
-
                 let string_literal = &mut String::new();
 
                 while let Some(c) = self.next_char() {
@@ -369,7 +383,6 @@ impl <'input> Lexer <'input> {
                     if c == '\\' {
                         let escaped_char = self.next_char()?;
                         string_literal.push(escaped_char);
-                        
                     } else if c.is_ascii() {
                         string_literal.push(c);
                     }
@@ -383,20 +396,18 @@ impl <'input> Lexer <'input> {
                 // Char literal
                 let char = self.next_char().unwrap();
                 if let Some('\'') = self.next_char() {
-                    return Some(TokenType::CharLiteral(char))
+                    return Some(TokenType::CharLiteral(char));
                 } else {
                     // TODO: The lexer should really return errors
                     panic!("Char literal is malformed.")
                 }
             }
 
-            
-
-            '0'..='9' => { 
+            '0'..='9' => {
                 let num_literal_str = &mut String::new();
                 num_literal_str.push(first_char);
 
-                let mut is_hex = false; 
+                let mut is_hex = false;
                 if first_char == '0' {
                     if let Some('x') = self.peek_char() {
                         num_literal_str.push(self.next_char().unwrap());
@@ -414,17 +425,24 @@ impl <'input> Lexer <'input> {
                     Double,
                 }
 
-                let mut l_type = LiteralType::UnsuffixedDecimal;
-                
+                let mut l_type = if is_hex {
+                    LiteralType::UnsuffixedHex
+                } else {
+                    LiteralType::UnsuffixedDecimal
+                };
 
                 while let Some(c) = self.peek_char() {
                     match c {
-                        '0'|'1'|'2'|'3'|'4'|'5'|'6'|'7'|'8'|'9'  => num_literal_str.push(c),
+                        '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => {
+                            num_literal_str.push(c)
+                        }
                         '.' => {
+                            assert!(is_hex == false);
                             num_literal_str.push(c);
                             l_type = LiteralType::Float;
                         }
                         'u' | 'U' => {
+                            assert!(is_hex == false);
                             self.next_char();
                             if let Some('l' | 'L') = self.peek_char() {
                                 self.next_char();
@@ -436,6 +454,7 @@ impl <'input> Lexer <'input> {
                         }
 
                         'l' | 'L' => {
+                            assert!(is_hex == false);
                             self.next_char();
                             if let LiteralType::Float = l_type {
                                 l_type = LiteralType::Double;
@@ -447,15 +466,15 @@ impl <'input> Lexer <'input> {
                                     l_type = LiteralType::SuffixedL;
                                 }
                             }
-                            
+
                             break;
                         }
 
                         'f' | 'F' => {
+                            assert!(is_hex == false);
                             l_type = LiteralType::Float;
                             break;
                         }
-
 
                         _ => break,
                     }
@@ -464,12 +483,12 @@ impl <'input> Lexer <'input> {
 
                 // From the C standard:
 
-                // The type of an integer constant is the first of the corresponding list in which its value can be represented: 
-                // Unsuffixed decimal: int, long int, unsigned long int; 
-                // unsuffixed octal or hexadecimal: int, unsigned int, long int, unsigned long int; 
-                // suffixed by the letter u or U: unsigned int, unsigned long int; 
-                // suffixed by the letter l or L: long int, unsigned long int; 
-                // suffixed by both the letters u or U and l or L: unsigned long int . 
+                // The type of an integer constant is the first of the corresponding list in which its value can be represented:
+                // Unsuffixed decimal: int, long int, unsigned long int;
+                // unsuffixed octal or hexadecimal: int, unsigned int, long int, unsigned long int;
+                // suffixed by the letter u or U: unsigned int, unsigned long int;
+                // suffixed by the letter l or L: long int, unsigned long int;
+                // suffixed by both the letters u or U and l or L: unsigned long int .
 
                 match l_type {
                     LiteralType::UnsuffixedDecimal => {
@@ -526,109 +545,106 @@ impl <'input> Lexer <'input> {
                             panic!("Float literal {num_literal_str} malformed or too large");
                         }
                     }
-                    _ => panic!("Not implemented")
                 }
-
             }
 
             '+' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::Plus), 
-                    '+' => return Some(TokenType::Increment),  
-                    '=' => return Some(TokenType::PlusAssign) 
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::Plus),
+                    '+' => return Some(TokenType::Increment),
+                    '=' => return Some(TokenType::PlusAssign)
                 );
             }
 
             '-' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::Minus), 
-                    '-' => return Some(TokenType::Decrement),  
-                    '=' => return Some(TokenType::MinusAssign),  
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::Minus),
+                    '-' => return Some(TokenType::Decrement),
+                    '=' => return Some(TokenType::MinusAssign),
                     '>' => return Some(TokenType::PtrOperand)
                 );
             }
 
             '*' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::Asterisk), 
-                    '=' => return Some(TokenType::MultAssign)  
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::Asterisk),
+                    '=' => return Some(TokenType::MultAssign)
                 );
             }
 
             '/' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::Div), 
-                    '=' => return Some(TokenType::DivAssign) 
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::Div),
+                    '=' => return Some(TokenType::DivAssign)
                 );
             }
 
             '%' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::Mod), 
-                    '=' => return Some(TokenType::ModAssign)  
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::Mod),
+                    '=' => return Some(TokenType::ModAssign)
                 )
             }
 
             '&' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::Ampersand), 
-                    '&' => return Some(TokenType::ANDLogical),  
-                    '=' => return Some(TokenType::ANDAssign)  
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::Ampersand),
+                    '&' => return Some(TokenType::ANDLogical),
+                    '=' => return Some(TokenType::ANDAssign)
                 );
             }
 
             '|' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::OR), 
-                    '|' => return Some(TokenType::ORLogical),  
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::OR),
+                    '|' => return Some(TokenType::ORLogical),
                     '=' => return Some(TokenType::ORAssign)
                 );
             }
 
             '^' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::XOR), 
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::XOR),
                     '=' => return Some(TokenType::XORAssign)
                 );
             }
 
             '<' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::LessThan), 
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::LessThan),
                     '<' => {
-                        lex_operand!(lexer = self, 
+                        lex_operand!(lexer = self,
                             fallback => return Some(TokenType::LeftShift),
                             '=' => return Some(TokenType::LeftShiftAssign)
                         );
-                    },  
-                    '=' => return Some(TokenType::LessThanOrEq)  
+                    },
+                    '=' => return Some(TokenType::LessThanOrEq)
                 );
             }
 
             '>' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::GreaterThan), 
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::GreaterThan),
                     '>' => {
-                        lex_operand!(lexer = self, 
+                        lex_operand!(lexer = self,
                             fallback => return Some(TokenType::RightShift),
                             '=' => return Some(TokenType::RightShiftAssign)
                         );
-                    },  
+                    },
                     '=' => return Some(TokenType::GreaterThanOrEq)
                 );
-            } 
-
+            }
 
             '!' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::NegationLogical), 
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::NegationLogical),
                     '=' => return Some(TokenType::NotEquals)
                 );
             }
 
             '=' => {
-                lex_operand!(lexer = self, 
-                    fallback => return Some(TokenType::Assign), 
+                lex_operand!(lexer = self,
+                    fallback => return Some(TokenType::Assign),
                     '=' => return Some(TokenType::Equals)
                 );
             }
@@ -638,23 +654,22 @@ impl <'input> Lexer <'input> {
             ',' => return Some(TokenType::Comma),
             ';' => return Some(TokenType::Semicolon),
             ':' => return Some(TokenType::Colon),
-            '(' => return Some(TokenType::LParen), 
-            ')' => return Some(TokenType::RParen),    
-            '{' => return Some(TokenType::LCurlyBracket),  
-            '}' => return Some(TokenType::RCurlyBracket),  
-            '[' => return Some(TokenType::LBracket),  
-            ']' => return Some(TokenType::RBracket),  
+            '(' => return Some(TokenType::LParen),
+            ')' => return Some(TokenType::RParen),
+            '{' => return Some(TokenType::LCurlyBracket),
+            '}' => return Some(TokenType::RCurlyBracket),
+            '[' => return Some(TokenType::LBracket),
+            ']' => return Some(TokenType::RBracket),
 
             _ => {
                 //return Some(Token::Unknown);
-                
+
                 // This is more idiomatic rust - however, it blurs
-                // the line between whether 
+                // the line between whether
                 // 1. No more chars -> therefore no more tokens
                 // and 2. current token not recognised.
                 return None;
             }
-        }    
+        }
     }
 }
-

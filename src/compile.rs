@@ -2,11 +2,8 @@ use crate::arena::*;
 use crate::colours::*;
 use crate::lexer::*;
 use crate::parser::*;
-use crate::passes::mem_to_reg;
 use crate::pretty_print::*;
-use std::{error::Error, fmt};
 //use crate::typechecker::*;
-use crate::ir::*;
 
 // Global Error type for the whole compiler.
 #[derive(Debug)]
@@ -15,7 +12,6 @@ pub enum CompilationError<'e> {
     InsufficientSpace,
 
     // Parser Errors
-    UnimplVerbose(String),
     NotImplemented,
     UnexpectedToken(Token<'e>),
     ExpectedToken(TokenType<'e>),
@@ -73,7 +69,7 @@ fn display_compilation_error<'i>(err: CompilationError<'i>, lexer: &mut Lexer) {
     let err_str = match err {
         InsufficientSpace => "Memory Arena ran out of space.".to_string(),
         NotImplemented => "Error caused by feature not yet implemented.".to_string(),
-        UnimplVerbose(msg) => format!("Error caused by unimplemented feature {msg}"),
+        // UnimplVerbose(msg) => format!("Error caused by unimplemented feature {msg}"),
 
         // TODO: This error is generally unhelpful without explaining _what_ the parser expected to come next.
         ExpectedInput => format!("Lexer terminated early."),
@@ -116,18 +112,24 @@ pub fn parse_only(input: &str) {
             //println!("{:?}", node);
             print_ast(node, "".to_string(), true);
         }
-        Err(e) => display_compilation_error(e, lexer),
+        Err(e) => {
+            display_compilation_error(e, lexer);
+            panic!()
+        }
     }
 }
 
 pub fn compile_start(input: &str) {
-    let arena = &mut Arena::new(20000);
+    coz::thread_init();
+    // for _ in 0..10_000_000 {
+    let arena = &mut Arena::new(20000 * 8 * 8 * 8);
     let lexer = &mut Lexer::new(&input, &arena);
 
     match compile(&arena, lexer) {
         Err(e) => display_compilation_error(e, lexer),
         Ok(()) => (),
     }
+    // }
 }
 
 fn compile<'a>(arena: &'a Arena, lexer: &mut Lexer<'a>) -> Result<(), CompilationError<'a>> {
@@ -135,7 +137,7 @@ fn compile<'a>(arena: &'a Arena, lexer: &mut Lexer<'a>) -> Result<(), Compilatio
     print_ast(translation_unit, "".to_string(), true);
     //type_check_start(translation_unit)?;
     //codegen_start(translation_unit)?;
-    let blocks = ir_gen_translation_unit(translation_unit, arena)?;
-    mem_to_reg(blocks);
+    // let blocks = ir_gen_translation_unit(translation_unit, arena)?;
+    // mem_to_reg(blocks);
     Ok(())
 }
